@@ -2,6 +2,17 @@
 #Be sure to run Functions.R script first
 
 #################################################
+#Reading in data by year
+data_mort_0304 <- readfun('2003_2004')
+data_mort_0506 <- readfun('2005_2006')
+data_mort_0708 <- readfun('2007_2008')
+data_mort_0910 <- readfun('2009_2010')
+data_mort_1112 <- readfun('2011_2012')
+data_mort_1314 <- readfun('2013_2014')
+data_mort_1516 <- readfun('2015_2016')
+data_mort_1718 <- readfun('2017_2018')
+
+#################################################
 #Extracting data for for 2003-04 through 2011-12
 `2003-04` <- extractfun('L24PFC_C', 'DEMO_C', 'WTSA2YR', "2003-04", data_mort_0304) 
 
