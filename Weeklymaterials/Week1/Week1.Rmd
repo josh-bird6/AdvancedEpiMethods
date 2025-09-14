@@ -1,0 +1,124 @@
+---
+title: "Untitled"
+output: pdf_document
+date: "2025-09-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+
+library(tidyverse)
+library(nhanesA)
+library(table1)
+library(kableExtra)
+
+
+```
+
+## Problem 1
+
+Importing and translating single-year data. Checking first few rows
+
+```{r Q1, echo = F}
+#reading in 2013-14 data
+`2013-14` <- nhanes('DEMO_H')
+
+#checking first few rows
+`2013-14` %>% 
+  select(SEQN, RIAGENDR, RIDAGEYR) %>% 
+  head()
+
+```
+
+## Problem 2
+
+```{r Q2, echo = F}
+
+#joining BMX data with demographic data by SEQN
+joined <- full_join(`2013-14`,
+          nhanes('BMX_H'),
+          by = 'SEQN')
+
+#checking dimensions
+dim(joined)
+
+```
+
+## Problem 3
+
+```{r Q3, echo = F}
+#Concatenating the demographic and BMI data, and smashing 2013-14, 2015-16 and 2017-18 data together
+nhanes_raw <- bind_rows(
+  #2013-14
+  joined, 
+  #2015-16
+  (full_join(nhanes('DEMO_I'), nhanes('BMX_I'), by = 'SEQN')), 
+  #2017-18
+  (full_join(nhanes('DEMO_J'), nhanes('BMX_J'), by = 'SEQN'))
+  )
+
+dim(nhanes_raw)
+```
+
+## Problem 4
+
+```{r Q4, echo = F}
+
+nhanes_clean <- nhanes_raw %>% 
+  filter(RIDAGEYR >= 20) %>% 
+  rename(Sex = RIAGENDR,
+         Age = RIDAGEYR,
+         RaceEthnicity = RIDRETH3,
+         BMI = BMXBMI) %>% 
+  mutate(RaceEthnicity = case_when(RaceEthnicity %in% c('Mexican American', 'Other Hispanic') ~ 'Hispanic',
+                                   T ~ RaceEthnicity),
+         AgeGroup = case_when(Age >= 20 & Age <40 ~ '20-39',
+                              Age >=40 & Age <60 ~ '40-59',
+                              Age >=60 ~ '60+'),
+         BMIcat = case_when(BMI <18.5 ~ 'Underweight',
+                            BMI >=18.5 & BMI<25 ~ 'Normal weight',
+                            BMI >=25 & BMI <30 ~ 'Overweight',
+                            BMI >30 ~ 'Obese'))
+
+```
+
+## Problem 5
+
+```{r Q5, echo = F}
+nhanes_analysis <- nhanes_clean %>% 
+  select(Sex, Age, AgeGroup, RaceEthnicity, BMI, BMIcat)
+
+str(nhanes_analysis)
+
+```
+
+## Problem 6
+
+```{r Q6, warning=FALSE}
+#checking missingness
+missingness <- unlist(lapply(nhanes_analysis , function(x) sum(is.na(x))))/nrow(nhanes_analysis) 
+
+#visualising
+bind_cols(
+  #first creating dataframe with missing %
+  (
+  data.frame(lapply(missingness, type.convert), stringsAsFactors = FALSE) %>%
+    t() %>%
+    data.frame(col = .) %>%
+    mutate(col = round(col * 100, 1))
+  ),
+  #joining the names (which were lost in the conversion to DF)
+  names(missingness)
+  ) %>% 
+  #visualising
+  ggplot(aes(x = reorder(`...2`,col), y = col)) +
+  geom_col() +
+  coord_flip() +
+  labs(x = "",
+       y = '% missingness')
+```
+
+```{r Q7}
+table1(~ Sex + Age + AgeGroup + RaceEthnicity + BMI + BMIcat | Sex,
+       data = nhanes_analysis)
+```
