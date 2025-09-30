@@ -1,0 +1,571 @@
+---
+title: 'SAP: Team Alabaster'
+output: pdf_document
+date: "2025-09-29"
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F)
+
+#Libraries
+library(tidyverse)
+library(nhanesA)
+library(tableone)
+library(survival)
+library(ggsurvfit)
+library(cowplot)
+library(survey)
+library(flextable)
+library(rms)
+```
+
+## Introduction
+
+This document details all the code necessary to reproduce the datasets and analysis in the Statistical Analysis Plan for Team Alabaster. 
+
+After reading in all the libraries in ```setup```, the first code chunk (```functions```) defines the functions which are used to extract and format data presented throughout the SAP. In the ```base_wrangling``` code chunk, these functions are deployed for data across all the years which are then concatenated into the base dataset. Some visualisations (not included in the SAP) are presented for exploratory purposes in ```vis```.
+
+The ```tables``` code chunk creates and outputs tables for the exposures as well as the demographic data stratified by outcome. These are obviously do not look pretty here but they are formatted in the SAP. The final code chunk then presents table outputs of the crude and initial adjusted Cox regression models. Further information and interpretation can be found in the SAP.
+
+```{r functions}
+#This code chunk defines all the functions used to extract data.
+#Creating function to read in all the mortality data
+#Downloaded directly from the CDC website: https://ftp.cdc.gov/pub/Health_Statistics/NCHS/datalinkage/linked_mortality/
+readfun <- function(df) {
+  read_fwf(
+    paste0('Data/NHANES_', df, '_MORT_2019_PUBLIC.dat'),
+    col_types = 'iiiiiiii',
+    fwf_cols(
+      SEQN = c(1, 6),
+      eligstat = c(15, 15),
+      mortstat = c(16, 16),
+      ucod_leading = c(17, 19),
+      diabetes = c(20, 20),
+      hyperten = c(21, 21),
+      permth_int = c(43, 45),
+      permth_exm = c(46, 48)
+    ),
+    na = c('', '.')
+  )
+}
+######################################################
+#Function for extracting data ONLY FOR FIRST 5 WAVES OF TIME SERIES (2013/14 to 2011/12)
+
+#Calls for fourteen arguments: 
+#t#Calls for fourteen arguments: 
+#the year of laboratory data; year of demographic data; diabetes (questionnaire), BMI (exam), smoking (exam), hypertension (questionnaire), menstraul cycle (questionnaire), heart disease (quesitonnaire), kidney (laboratory), occupation (exam), diet (exam); survey weights FROM THE LABORATORY DATA (as per NHANES documentation); the year, and relevant year of mortality data
+
+
+extractfun <- function(lab, demo, diabetes, BMI, Smoking, Hypertension, Menopause, Heartdisease, Kidney, Occupation, Diet, weight, year, mortdat){
+  left_join(nhanes(lab), nhanes(demo), by = 'SEQN') %>%  #joining lab and demo data
+    left_join(nhanes(diabetes), by = 'SEQN') %>%         #joining diabetes data (questionnaire)
+    left_join(nhanes(BMI), by = 'SEQN') %>%              #joining BMI data (exam)
+    left_join(nhanes(Smoking), by = 'SEQN') %>%          #joining smoking data (exam)
+    left_join(nhanes(Hypertension), by = 'SEQN') %>%     #joining hypertension data (questionnaire)
+    left_join(nhanes(Menopause), by = 'SEQN') %>%        #joining menstrual cycle data (questionnaire)
+    left_join(nhanes(Heartdisease), by = 'SEQN') %>%     #joining heart disease data (questionnaire)
+    left_join(nhanes(Kidney), by = 'SEQN') %>%           #joining kidney data (laboratory data)
+    left_join(nhanes(Occupation), by = 'SEQN') %>%       #joining occupation data (exam)
+    left_join(nhanes(Diet), by = 'SEQN') %>%             #joining diet information (exam)
+    rename(Weight = weight,
+           PFOA = LBXPFOA,
+           PFOS = LBXPFOS,
+           PFNA = LBXPFNA,
+           PFHxS = LBXPFHS,
+           Gender = RIAGENDR,
+           Age = RIDAGEYR,
+           Ethnicity = RIDRETH1,
+           Education = DMDEDUC2,
+           Income = INDFMPIR,
+           Diabetes = DIQ010,
+           BMI = BMXBMI, 
+           Smoking = SMQ040,
+           Hypertension = BPQ020,
+           Menopause = RHQ031,
+           Heartdisease = MCQ160C,
+           Kidney = LBXSCR,
+           Occupation = OCD150,
+           Diet = DRD360,
+           Pregnancy = RIDEXPRG,
+           PseudoPSU = SDMVPSU,
+           PseudoStratum = SDMVSTRA) %>% 
+    #creating year variable
+    mutate(Year = year) %>%
+    #selecting relevant variables
+    select(Year, SEQN, PFOA, PFOS, PFNA, PFHxS, Gender, Age, Ethnicity, Education, Income, Diabetes, BMI, Smoking, Hypertension, Menopause, Heartdisease, Kidney, Pregnancy, Occupation, Diet, Weight, PseudoPSU, PseudoStratum) %>% 
+    #joining mortality data
+    left_join(mortdat, by = 'SEQN')
+}
+
+######################################################
+#2013/14 is where the PFAS reporting in NHANES changes - see next code chunk
+
+#2015/16 and 2017/18 are more straightforward, but require a separate function (because the exposures are not formatted the exact same as in previous years)
+
+extractfun_latter <- function(lab, demo, diabetes, BMI, Smoking, Hypertension, Menopause, Heartdisease, Kidney, Occupation, Diet, year, mortdata) {
+  
+  left_join(nhanes(lab), nhanes(demo), by = 'SEQN') %>% 
+    left_join(nhanes(diabetes), by = 'SEQN') %>%         #joining diabetes data (questionnaire)
+    left_join(nhanes(BMI), by = 'SEQN') %>%              #joining BMI data (exam)
+    left_join(nhanes(Smoking), by = 'SEQN') %>%          #joining smoking data (exam)
+    left_join(nhanes(Hypertension), by = 'SEQN') %>%     #joining hypertension data (questionnaire)
+    left_join(nhanes(Menopause), by = 'SEQN') %>%        #joining menstrual cycle data (questionnaire)
+    left_join(nhanes(Heartdisease), by = 'SEQN') %>%     #joining heart disease data (questionnaire)
+    left_join(nhanes(Kidney), by = 'SEQN') %>%           #joining kidney data (laboratory data)
+    left_join(nhanes(Occupation), by = 'SEQN') %>%       #joining occupation data (exam)
+    left_join(nhanes(Diet), by = 'SEQN') %>%             #joining diet information (exam)
+    #Summing PFOA and PFOS (because they are disaggregated)
+    mutate(PFOA = LBXNFOA + LBXBFOA,
+           PFOS = LBXNFOS + LBXMFOS,
+           Year = year) %>% 
+    rename(Weight = WTSB2YR,
+           PFNA = LBXPFNA,
+           PFHxS = LBXPFHS,
+           Gender = RIAGENDR,
+           Age = RIDAGEYR,
+           Ethnicity = RIDRETH1,
+           Education = DMDEDUC2,
+           Income = INDFMPIR,
+           Diabetes = DIQ010,
+           BMI = BMXBMI, 
+           Smoking = SMQ040,
+           Hypertension = BPQ020,
+           Menopause = RHQ031,
+           Heartdisease = MCQ160C,
+           Kidney = LBXSCR,
+           Occupation = OCD150,
+           Diet = DRD360,
+           Pregnancy = RIDEXPRG,
+           PseudoPSU = SDMVPSU,
+           PseudoStratum = SDMVSTRA) %>% 
+    select(Year, SEQN, PFOA, PFOS, PFNA, PFHxS, Gender, Age, Ethnicity, Education, Income, Diabetes, BMI, Smoking, Hypertension, Menopause, Heartdisease, Kidney, Pregnancy, Occupation, Diet, Weight, PseudoPSU, PseudoStratum) %>% 
+    #Joining mortality data
+    left_join(mortdata, by = 'SEQN') 
+}
+
+######################################################
+#EXPOSURE TABLE
+
+#Defining function which extracts and formats exposure data for each analyte
+exposure_extraction_fun <- function(Analyte, PFAS){
+  
+  q1 <- quantile(Analyte, 0.25) %>% data.frame()
+  med <- median(Analyte) %>% data.frame()
+  q3 <- quantile(Analyte, 0.75) %>% data.frame()
+  mini <- min(Analyte) %>% data.frame()
+  maxi <- max(Analyte) %>% data.frame()
+  
+  bind_cols(med, q1,q3, mini, maxi) %>%
+    mutate(`Median [1Q-3Q]` = paste0(round(....1, 2), " (", ....2, '-', `....3`, ")"),
+           Substance = PFAS) %>%
+    rename(Min =  `....4`,
+           Max = `....5`) %>%
+    select(Substance, `Median [1Q-3Q]`, Min, Max)
+  
+}
+```
+
+```{r base_wrangling}
+#Be sure to read in all the functions from the previous code chunk first
+
+#################################################
+#Reading in mortality data by year
+data_mort_0304 <- readfun('2003_2004')
+data_mort_0506 <- readfun('2005_2006')
+data_mort_0708 <- readfun('2007_2008')
+data_mort_0910 <- readfun('2009_2010')
+data_mort_1112 <- readfun('2011_2012')
+data_mort_1314 <- readfun('2013_2014')
+data_mort_1516 <- readfun('2015_2016')
+data_mort_1718 <- readfun('2017_2018')
+
+#################################################
+#Extracting data for for 2003-04 through 2011-12
+`2003-04` <- extractfun('L24PFC_C', 'DEMO_C', 'DIQ_C', 'BMX_C', 'SMQ_C', 'BPQ_C', 'RHQ_C', 'MCQ_C', 'L40_C', "OCQ_C", "DR1TOT_C", 'WTSA2YR', "2003-04", data_mort_0304) 
+
+`2005-06` <- extractfun('PFC_D', 'DEMO_D', 'DIQ_D', 'BMX_D', 'SMQ_D', 'BPQ_D', 'RHQ_D', 'MCQ_D', 'BIOPRO_D', "OCQ_D", 'DR1TOT_D', 'WTSA2YR', '2005-06', data_mort_0506)
+
+`2007-08` <- extractfun('PFC_E', 'DEMO_E', 'DIQ_E', 'BMX_E', 'SMQ_E', 'BPQ_E', 'RHQ_E', 'MCQ_E', 'BIOPRO_E', "OCQ_E", 'DR1TOT_F', "WTSC2YR", '2007-08', data_mort_0708)
+
+`2009-10` <- extractfun('PFC_F', 'DEMO_F', 'DIQ_F', 'BMX_F', 'SMQ_F', 'BPQ_F', 'RHQ_F', 'MCQ_F', 'BIOPRO_F', "OCQ_F", 'DR1TOT_G', "WTSC2YR", '2009-10', data_mort_0910)
+
+`2011-12` <- extractfun('PFC_G', 'DEMO_G', 'DIQ_G', 'BMX_G', 'SMQ_G', 'BPQ_G', 'RHQ_G', 'MCQ_G', 'BIOPRO_G', "OCQ_G", 'DR1TOT_H', "WTSA2YR", '2011-12', data_mort_1112)
+
+######################
+######################
+######################
+######################
+######################
+######################
+#2013/14 is where it gets complicated
+#first we need to grab the PFAS data for the four chemicals, which are located in two different survey modules
+#Then combine measurements for *PFOA and PFOS ONLY*
+
+`2013-14` <- left_join(
+  #First for PFOA and PFOS
+  (nhanes('SSPFAS_H') %>% 
+     mutate(PFOA = SSNPFOA + SSBPFOA,
+            PFOS = SSNPFOS + SSMPFOS) %>% 
+     select(SEQN, WTSSBH2Y, PFOA, PFOS)),
+  #Then for PFNA, PFHxS, which are single measurements (do not require combining)
+  (nhanes('PFAS_H') %>%
+     rename(PFNA = LBXPFNA,
+            PFHxS = LBXPFHS) %>% 
+     select(SEQN, PFNA, PFHxS)),
+  by = 'SEQN'
+) %>% 
+  left_join(nhanes('DEMO_H'), by = 'SEQN') %>%        #joining sociodemographic data
+  left_join(nhanes('DIQ_H'), by = 'SEQN') %>%         #joining diabetes data (questionnaire)
+  left_join(nhanes('BMX_H'), by = 'SEQN') %>%         #joining BMI data (exam)
+  left_join(nhanes('SMQ_H'), by = 'SEQN') %>%         #joining smoking data (exam)
+  left_join(nhanes('BPQ_H'), by = 'SEQN') %>%         #joining hypertension data (questionnaire)
+  left_join(nhanes('RHQ_H'), by = 'SEQN') %>%         #joining menstrual cycle data (questionnaire)
+  left_join(nhanes('MCQ_H'), by = 'SEQN') %>%         #joining heart disease data (questionnaire)
+  left_join(nhanes('BIOPRO_H'), by = 'SEQN') %>%      #joining kidney data (laboratory data)
+  left_join(nhanes('OCQ_H'), by = 'SEQN') %>%         #joining occupation data (exam)
+  left_join(nhanes('DR1TOT_H'), by = 'SEQN') %>%      #joining diet information (exam)
+  rename(Weight = WTSSBH2Y,
+         Gender = RIAGENDR,
+         Age = RIDAGEYR,
+         Ethnicity = RIDRETH1,
+         Education = DMDEDUC2,
+         Income = INDFMPIR,
+         Diabetes = DIQ010,
+         BMI = BMXBMI, 
+         Smoking = SMQ040,
+         Hypertension = BPQ020,
+         Menopause = RHQ031,
+         Heartdisease = MCQ160C,
+         Kidney = LBXSCR,
+         Occupation = OCD150,
+         Diet = DRD360,
+         Pregnancy = RIDEXPRG,
+         PseudoPSU = SDMVPSU,
+         PseudoStratum = SDMVSTRA) %>% 
+  mutate(Year = '2013-14') %>% 
+  select(Year, SEQN, PFOA, PFOS, PFNA, PFHxS, Gender, Age, Ethnicity, Education, Income, Diabetes, BMI, Smoking, Hypertension, Menopause, Heartdisease, Kidney, Pregnancy, Occupation, Diet,  Weight, PseudoPSU, PseudoStratum) %>% 
+  left_join(data_mort_1314, by = 'SEQN')
+######################
+######################
+######################
+######################
+######################
+######################
+
+#Finally for 2015/16 and 2017/18
+
+`2015-16` <- extractfun_latter('PFAS_I', 'DEMO_I', 'DIQ_I', 'BMX_I', 'SMQ_I', 'BPQ_I', 'RHQ_I', 'MCQ_I', 'BIOPRO_I', "OCQ_I", 'DR1TOT_I', "2015-16", data_mort_1516)
+
+`2017-18` <- extractfun_latter('PFAS_J', 'DEMO_J', 'DIQ_J', 'BMX_J', 'SMQ_J', 'BPQ_J', 'RHQ_J', 'MCQ_J', 'BIOPRO_J', "OCQ_J", "DR1TOT_J", "2017-18", data_mort_1718)
+
+
+
+##################################################
+ #NOW THE FINAL MERGE!
+
+FINAL_BASEDATASET <- bind_rows(
+  `2003-04`,
+  `2005-06`,
+  `2007-08`,
+  `2009-10`,
+  `2011-12`,
+  `2013-14`,
+  `2015-16`,
+  `2017-18`
+  ) %>%                           #After concatenation, total n = 17,851
+  #exclusion criteria
+  filter(Age >= 18,               #filtering out all observations under 18y/o (n = 14,965),        
+         !is.na(PFOA),            #filtering out all observations with missing exposure data (individuals missing one measurement are missing them all, n = 13,828) 
+         !is.na(mortstat)) %>%    #filtering out all observations with missing outcome data (n = 13,798)       
+  #defining causes of death (i.e. outcome)
+  mutate(
+    `Cause of death` = case_when(
+      ucod_leading == 1 ~ "Diseases of heart",
+      ucod_leading == 2 ~ "Malignant neoplasms",
+      ucod_leading == 3 ~ "Chronic lower respiratory diseases",
+      ucod_leading == 4 ~ "Accidents (unintentional injuries)",
+      ucod_leading == 5 ~ "Cerebrovascular diseases",
+      ucod_leading == 6 ~ "Alzheimer’s disease",
+      ucod_leading == 7 ~ "Diabetes mellitus",
+      ucod_leading == 8 ~ "Influenza and pneumonia",
+      ucod_leading == 9 ~ "Nephritis, nephrotic syndrome and nephrosis",
+      ucod_leading == 10 ~ "All other causes"
+    ),
+    MAINOUTCOME = case_when(ucod_leading == 1 | ucod_leading == 2 | ucod_leading == 3 | ucod_leading == 5 | ucod_leading == 6 | ucod_leading == 7 | ucod_leading == 9 ~ 1,
+                            T ~ 0)
+  )
+#######################################################
+#Final formatting of exposure and some covariates
+
+FINAL_BASEDATASET <- FINAL_BASEDATASET %>%
+  #First we are going to transform the exposure scales. They are heavily right-skewed, so going to log transform and then scale (mean = 0, SD = 1)
+  mutate(PFOA_scaled = as.numeric(scale(log(PFOA))),
+         PFOS_scaled = as.numeric(scale(log(PFOS))),
+         PFNA_scaled = as.numeric(scale(log(PFNA))),
+         PFHxS_scaled = as.numeric(scale(log(PFHxS))),
+         Ethnicity = case_when(Ethnicity == 'Other Hispanic' | Ethnicity == 'Mexican American' ~ 'Hispanic',
+                               T ~ Ethnicity),
+         Education = str_to_lower(Education),
+         Education = case_when(Education %in% c("9-11th grade (includes 12th grade with no diploma)", "less than 9th grade") ~ 'Some high school or below',
+                                Education %in% c('high school graduate/ged or equivalent', 'high school grad/ged or equivalent') ~ 'High School/GED or equivalent',
+                                T ~ Education),
+         BMI_class = case_when(BMI <25 ~ 'Normal weight',
+                               BMI >=25 & BMI <30 ~ 'Overweight',
+                               BMI >=30 ~ 'Obese'),
+         Menopause2 = case_when(Menopause == 'No' | Gender == 'Female' & Age >= 60 ~ "Yes",
+                                T ~ "No"),
+         Occupation2 = case_when(Occupation == 'Working at a job or business,' ~ 'Employed',
+                                Occupation == 'With a job or business but not at work,'|Occupation == "Looking for work, or"|Occupation =='Not working at a job or business?' ~ 'Not employed',
+                                T ~ Occupation)
+  ) %>% 
+  rename(`Povertytoincomeratio` = Income) %>% 
+  select(MAINOUTCOME, Year, SEQN, PFOA, PFOA_scaled, PFOS, PFOS_scaled, PFNA, PFNA_scaled, PFHxS, PFHxS_scaled, everything(), -diabetes, -hyperten, -eligstat, -Menopause)
+
+
+#checking missingness
+#unlist(lapply(FINAL_BASEDATASET , function(x) sum(is.na(x))))/nrow(FINAL_BASEDATASET) 
+
+```
+
+```{r vis, include = F}
+#Some visualiation was performed to explore the combined data
+
+#Median PFAS concentrations have definitely been declining over time
+
+FINAL_BASEDATASET %>% group_by(Year) %>% summarise(
+  PFOA = median(PFOA),
+  PFOS = median(PFOS),
+  PFNA = median(PFNA),
+  PFHxS = median(PFHxS)
+) %>% 
+  pivot_longer(2:5, names_to = 'Analyte', values_to = 'median concentration') %>% 
+  ggplot(aes(x = Year, y = `median concentration`, group = Analyte, color = Analyte)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  labs(y = 'Median concentration (µg/mL)',
+       x = 'Survey year') +
+  theme(legend.position = 'bottom')
+###############################################################
+
+#visualising cause of death
+FINAL_BASEDATASET %>% 
+  filter(!is.na(`Cause of death`),
+         MAINOUTCOME == 1) %>% 
+  group_by(`Cause of death`) %>% 
+  summarise(total = n(),
+            prop = (total/sum(FINAL_BASEDATASET$MAINOUTCOME))*100) %>% 
+  mutate(label = paste0(total, " (",round(prop,1), "%)")) %>% 
+  ggplot(aes(x = reorder(`Cause of death`, prop), y = total)) +
+  geom_col()+
+  coord_flip() + 
+  theme_bw() +
+  geom_text(aes(label = label), hjust = -.1) +
+  labs(x = "",
+       caption = 'n = 1,116',
+       y = 'Deaths') +
+  scale_y_continuous(limits = c(0,600)) +
+  scale_x_discrete(labels = scales::label_wrap(22)) +
+  theme(axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 13.5))
+###############################################################
+
+#Ad hoc chart of publications by year
+readxl::read_excel('Data/PubMed_Timeline_Results_by_Year.xlsx') %>% 
+  ggplot(aes(x = Year, y = Count)) +
+  geom_col() +
+  theme_bw() +
+  labs(y = 'Number of peer-reviewed publications') +
+  scale_x_continuous(breaks = seq(2000,2025, 2)) +
+  theme(axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 13.5))
+
+##################################################################
+
+#Combined KM chart (along with creating new follow up time variable in years)
+survfit2(Surv(time, MAINOUTCOME) ~ 1, data = (FINAL_BASEDATASET %>%
+                                                mutate(time = (Age * 12) + permth_int, time = time / 12))) %>%
+  ggsurvfit() +
+  labs(x = 'Follow-up time (years)', y = 'Survival probability') +
+  theme(legend.position = 'none') +
+  add_confidence_interval()
+
+```
+
+```{r tables}
+
+#EXPOSURE TABLE (from Functions.R)
+#Extracts and formats exposure data for each analyte
+
+bind_rows(
+  exposure_extraction_fun(FINAL_BASEDATASET$PFOA, "PFOA"),
+  
+  exposure_extraction_fun(FINAL_BASEDATASET$PFOS, "PFOS"),
+  
+  exposure_extraction_fun(FINAL_BASEDATASET$PFNA, "PFNA"),
+  
+  exposure_extraction_fun(FINAL_BASEDATASET$PFHxS, "PFHxS")
+) %>% 
+  remove_rownames() %>% 
+  flextable() %>% 
+  width(j = c(1,2), width = 2) %>% 
+  add_header_row(values = 'Basic exposure table', colwidths = 4)
+
+#############################################################
+#creating fu_time variable
+FINAL_BASEDATASET_regression <- FINAL_BASEDATASET %>%  
+  mutate(fu_time = (Age *12)+permth_int)
+
+#First incorporating complex survey design
+nhanes_design <- svydesign(
+  id = ~ PseudoPSU,
+  strata = ~ PseudoStratum,
+  weights = ~ Weight,
+  data = FINAL_BASEDATASET_regression,
+  nest = T
+)
+
+############################################################
+#OUTCOME TABLE
+
+#First specifying variables of interest
+varsofinterest <- c('Year', "Gender", "Age", "Ethnicity", "Education", "Povertytoincomeratio", "Diabetes", "BMI_class", "Smoking", "Hypertension", "Menopause2", "Heartdisease", 'Diet', 'Occupation2')
+
+#creating and outputting table - SURVEY WEIGHTED
+print(
+  svyCreateTableOne(
+    vars = varsofinterest,
+    strata = 'MAINOUTCOME',
+    data = nhanes_design,
+    addOverall = T,
+    test = F
+  ),
+  showAllLevels = F,
+  print = F
+) 
+
+#UNWEIGHTED
+print(
+  CreateTableOne(
+    vars = varsofinterest,
+    strata = 'MAINOUTCOME',
+    data = FINAL_BASEDATASET,
+    test = F,
+    addOverall = T
+  ),
+  showAllLevels = F,
+  print = F
+)%>% 
+  data.frame() %>% 
+  rownames_to_column(var = 'Variable') %>% 
+  flextable() %>% 
+  width(j = 1, width = 3.4) %>% 
+  add_header_row(values = 'Demographic data, overall and stratified by outcome', colwidths = 4)
+```
+
+```{r regression}
+#STATISTICAL ANALYSIS
+
+#CRUDE ANALYSIS, ONE FOR EACH EXPOSURE
+#These models are fit and then concentenated, with some additional formatting of the table
+
+crudetable <- bind_rows(
+#PFOA
+(svycoxph(
+  Surv(fu_time, MAINOUTCOME) ~ PFOA_scaled,
+  design = nhanes_design) %>% 
+  broom::tidy(conf.int = T, exponentiate = T)),
+#PFOS
+(svycoxph(
+  Surv(fu_time, MAINOUTCOME) ~ PFOS_scaled,
+  design = nhanes_design) %>% 
+  broom::tidy(conf.int = T, exponentiate = T)),
+#PFNA
+(svycoxph(
+  Surv(fu_time, MAINOUTCOME) ~ PFNA_scaled,
+  design = nhanes_design) %>% 
+  broom::tidy(conf.int = T, exponentiate = T)),
+#PFHxS
+(svycoxph(
+  Surv(fu_time, MAINOUTCOME) ~ PFHxS_scaled,
+  design = nhanes_design) %>% 
+  broom::tidy(conf.int = T, exponentiate = T))
+) %>% 
+  mutate(`HR (95%CI)` = paste0(round(estimate,3), " (", round(conf.low,2), ", ", round(conf.high,2), ")"),
+         p.value = round(p.value, 3),
+         robust.se = round(robust.se, 3),
+         term = str_replace(term, "_scaled", " ")) %>% 
+  rename(`P-value` = p.value,
+         `PFAS subtype` = term,
+         `Robust SE` = robust.se) %>% 
+  select(`PFAS subtype`, `HR (95%CI)`, `Robust SE`, `P-value`) %>% 
+  flextable() %>% 
+  # hline(i = c(2,4,6)) %>% 
+  width(j = c(1,2), width = 2) %>% 
+  add_header_row(values = 'Crude analysis', colwidths = 4)
+
+crudetable
+
+###########################################################
+
+#ADJUSTED for year, age, ethnicity and gender
+#adding restricted cubic spline for age (four knots, as per literature)
+
+adjusted_table <- bind_rows(
+#PFOA
+  (svycoxph(
+    Surv(fu_time, MAINOUTCOME) ~ PFOA_scaled + Year + rcs(Age, 4) + Ethnicity + Gender,
+    design = nhanes_design
+  ) %>%
+    broom::tidy(conf.int = T, exponentiate = T) %>% 
+    slice(1)
+),
+
+#PFOS
+(svycoxph(
+    Surv(fu_time, MAINOUTCOME) ~ PFOS_scaled + Year + rcs(Age, 4) + Ethnicity + Gender,
+    design = nhanes_design
+  ) %>%
+    broom::tidy(conf.int = T, exponentiate = T) %>% 
+    slice(1)
+) ,
+
+#PFNA
+(
+  svycoxph(
+    Surv(fu_time, MAINOUTCOME) ~ PFNA_scaled + Year + rcs(Age, 4) + Ethnicity + Gender,
+    design = nhanes_design
+  ) %>%
+    broom::tidy(conf.int = T, exponentiate = T) %>% 
+    slice(1)
+) ,
+
+#PFHxS
+(
+  svycoxph(
+    Surv(fu_time, MAINOUTCOME) ~ PFHxS_scaled + Year + rcs(Age, 4) + Ethnicity + Gender,
+    design = nhanes_design
+  ) %>%
+    broom::tidy(conf.int = T, exponentiate = T) %>% 
+    slice(1)
+) 
+) %>% 
+  mutate(`HR (95%CI)` = paste0(round(estimate,2), " (", round(conf.low,2), ", ", round(conf.high,2), ")"),
+         p.value = round(p.value, 3),
+         robust.se = round(robust.se, 3),
+         term = str_replace(term, "_scaled", " ")) %>% 
+  rename(`P-value` = p.value,
+         `PFAS subtype` = term,
+         `Robust SE` = robust.se) %>% 
+  select(`PFAS subtype`, `HR (95%CI)`, `Robust SE`, `P-value`) %>% 
+  flextable() %>% 
+  # hline(i = c(2,4,6)) %>% 
+  width(j = c(1,2), width = 2) %>% 
+  add_footer_row(values = "Adjusted for survey year, age, sex and ethnicity", colwidths = 4) %>% 
+  add_header_row(values = 'Adjusted analysis', colwidths = 4)
+
+adjusted_table
+  
+```
+
+
