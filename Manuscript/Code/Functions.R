@@ -2,7 +2,13 @@
 
 library(tidyverse)
 library(nhanesA)
-library(table1)
+library(tableone)
+library(survival)
+library(ggsurvfit)
+library(cowplot)
+library(survey)
+library(flextable)
+library(rms)
 
 #Creating function to read in all the mortality data
 #Downloaded directly from the CDC website: https://ftp.cdc.gov/pub/Health_Statistics/NCHS/datalinkage/linked_mortality/
@@ -26,8 +32,20 @@ readfun <- function(df) {
 ######################################################
 #Function for extracting data ONLY FOR FIRST 5 WAVES OF TIME SERIES (2013/14 to 2011/12)
 
-extractfun <- function(lab, demo, weight, year, mortdat){
-  left_join(nhanes(lab), nhanes(demo), by = 'SEQN') %>% 
+#Calls for fourteen arguments: 
+#the year of laboratory data; year of demographic data; diabetes (questionnaire), BMI (exam), smoking (exam), hypertension (questionnaire), menstraul cycle (questionnaire), heart disease (quesitonnaire), kidney (laboratory), occupation (exam), diet (exam); survey weights FROM THE LABORATORY DATA (as per NHANES documentation); the year, and relevant year of mortality data
+
+extractfun <- function(lab, demo, diabetes, BMI, Smoking, Hypertension, Menopause, Heartdisease, Kidney, Occupation, Diet, weight, year, mortdat){
+  left_join(nhanes(lab), nhanes(demo), by = 'SEQN') %>%  #joining lab and demo data
+    left_join(nhanes(diabetes), by = 'SEQN') %>%         #joining diabetes data (questionnaire)
+    left_join(nhanes(BMI), by = 'SEQN') %>%              #joining BMI data (exam)
+    left_join(nhanes(Smoking), by = 'SEQN') %>%          #joining smoking data (exam)
+    left_join(nhanes(Hypertension), by = 'SEQN') %>%     #joining hypertension data (questionnaire)
+    left_join(nhanes(Menopause), by = 'SEQN') %>%        #joining menstrual cycle data (questionnaire)
+    left_join(nhanes(Heartdisease), by = 'SEQN') %>%     #joining heart disease data (questionnaire)
+    left_join(nhanes(Kidney), by = 'SEQN') %>%           #joining kidney data (laboratory data)
+    left_join(nhanes(Occupation), by = 'SEQN') %>%       #joining occupation data (exam)
+    left_join(nhanes(Diet), by = 'SEQN') %>%             #joining diet information (exam)
     rename(Weight = weight,
            PFOA = LBXPFOA,
            PFOS = LBXPFOS,
@@ -37,21 +55,47 @@ extractfun <- function(lab, demo, weight, year, mortdat){
            Age = RIDAGEYR,
            Ethnicity = RIDRETH1,
            Education = DMDEDUC2,
+           Income = INDFMPIR,
+           Diabetes = DIQ010,
+           BMI = BMXBMI, 
+           Smoking = SMQ040,
+           Hypertension = BPQ020,
+           Menopause = RHQ031,
+           Heartdisease = MCQ160C,
+           Kidney = LBXSCR,
+           Occupation = OCD150,
+           Diet = DRD360,
            Pregnancy = RIDEXPRG,
            PseudoPSU = SDMVPSU,
            PseudoStratum = SDMVSTRA) %>% 
-    mutate(Year = year) %>% 
-    select(Year, SEQN, PFOA, PFOS, PFNA, PFHxS, Gender, Age, Ethnicity, Education, Pregnancy, Weight, PseudoPSU, PseudoStratum) %>% 
+    #creating year variable
+    mutate(Year = year) %>%
+    #selecting relevant variables
+    select(Year, SEQN, PFOA, PFOS, PFNA, PFHxS, Gender, Age, Ethnicity, Education, Income, Diabetes, BMI, Smoking, Hypertension, Menopause, Heartdisease, Kidney, Pregnancy, Occupation, Diet, Weight, PseudoPSU, PseudoStratum) %>% 
+    #joining mortality data
     left_join(mortdat, by = 'SEQN')
 }
+
+
+
 ######################################################
 #2013/14 is a faff - see Base_wranglingR.R script
 
-#2015/16 and 2017/18 are more straightforward, but require a seaprate function (because of course is not formatted the exact same)
+#2015/16 and 2017/18 are more straightforward, but require a separate function (because the exposures are not formatted the exact same as in previous years)
 
-extractfun_latter <- function(lab, demo, year, mortdata) {
+extractfun_latter <- function(lab, demo, diabetes, BMI, Smoking, Hypertension, Menopause, Heartdisease, Kidney, Occupation, Diet, year, mortdata) {
   
   left_join(nhanes(lab), nhanes(demo), by = 'SEQN') %>% 
+    left_join(nhanes(diabetes), by = 'SEQN') %>%         #joining diabetes data (questionnaire)
+    left_join(nhanes(BMI), by = 'SEQN') %>%              #joining BMI data (exam)
+    left_join(nhanes(Smoking), by = 'SEQN') %>%          #joining smoking data (exam)
+    left_join(nhanes(Hypertension), by = 'SEQN') %>%     #joining hypertension data (questionnaire)
+    left_join(nhanes(Menopause), by = 'SEQN') %>%        #joining menstrual cycle data (questionnaire)
+    left_join(nhanes(Heartdisease), by = 'SEQN') %>%     #joining heart disease data (questionnaire)
+    left_join(nhanes(Kidney), by = 'SEQN') %>%           #joining kidney data (laboratory data)
+    left_join(nhanes(Occupation), by = 'SEQN') %>%       #joining occupation data (exam)
+    left_join(nhanes(Diet), by = 'SEQN') %>%             #joining diet information (exam)
+    #Summing PFOA and PFOS (because they are disaggregated)
     mutate(PFOA = LBXNFOA + LBXBFOA,
            PFOS = LBXNFOS + LBXMFOS,
            Year = year) %>% 
@@ -62,9 +106,40 @@ extractfun_latter <- function(lab, demo, year, mortdata) {
            Age = RIDAGEYR,
            Ethnicity = RIDRETH1,
            Education = DMDEDUC2,
+           Income = INDFMPIR,
+           Diabetes = DIQ010,
+           BMI = BMXBMI, 
+           Smoking = SMQ040,
+           Hypertension = BPQ020,
+           Menopause = RHQ031,
+           Heartdisease = MCQ160C,
+           Kidney = LBXSCR,
+           Occupation = OCD150,
+           Diet = DRD360,
            Pregnancy = RIDEXPRG,
            PseudoPSU = SDMVPSU,
            PseudoStratum = SDMVSTRA) %>% 
-    select(Year, SEQN, PFOA, PFOS, PFNA, PFHxS, Gender, Age, Ethnicity, Education, Pregnancy, Weight, PseudoPSU, PseudoStratum) %>% 
+    select(Year, SEQN, PFOA, PFOS, PFNA, PFHxS, Gender, Age, Ethnicity, Education, Income, Diabetes, BMI, Smoking, Hypertension, Menopause, Heartdisease, Kidney, Pregnancy, Occupation, Diet, Weight, PseudoPSU, PseudoStratum) %>% 
+    #Joining mortality data
     left_join(mortdata, by = 'SEQN') 
+}
+######################################################
+#EXPOSURE TABLE
+
+#Defining function which extracts and formats exposure data for each analyte
+exposure_extraction_fun <- function(Analyte, PFAS){
+  
+  q1 <- quantile(Analyte, 0.25) %>% data.frame()
+  med <- median(Analyte) %>% data.frame()
+  q3 <- quantile(Analyte, 0.75) %>% data.frame()
+  mini <- min(Analyte) %>% data.frame()
+  maxi <- max(Analyte) %>% data.frame()
+  
+  bind_cols(med, q1,q3, mini, maxi) %>%
+    mutate(`Median [1Q-3Q]` = paste0(round(....1, 2), " (", ....2, '-', `....3`, ")"),
+           Substance = PFAS) %>%
+    rename(Min =  `....4`,
+           Max = `....5`) %>%
+    select(Substance, `Median [1Q-3Q]`, Min, Max)
+  
 }
