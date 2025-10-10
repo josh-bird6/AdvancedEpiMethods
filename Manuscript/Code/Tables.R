@@ -17,18 +17,44 @@ write.csv(bind_rows(
   remove_rownames(), 'Data/test.csv')
 #############################################################
 
-#creating fu_time variable
-FINAL_BASEDATASET_regression <- FINAL_BASEDATASET %>%  
-  mutate(fu_time = (Age *12)+permth_int) 
+#Table 1, stratified by outcome (and including exposure information)
+#First specifying variables of interest
+varsofinterest <- c('PFOA', 'PFOS', 'PFNA', 'PFHxS', 'Year', "Gender", "Age", "Ethnicity", "Education", "Povertytoincomeratio", "Diabetes", "BMI_class", 'Diet', 'Occupation2')
 
-#First incorporating complex survey design
-nhanes_design <- svydesign(
-  id = ~ PseudoPSU,
-  strata = ~ PseudoStratum,
-  weights = ~ Weight,
-  data = FINAL_BASEDATASET_regression,
-  nest = T
+#UNWEIGHTED (these are counts)
+write.csv(print(
+  CreateTableOne(
+    vars = varsofinterest,
+    strata = 'MAINOUTCOME',
+    data = FINAL_BASEDATASET_regression,
+    test = F,
+    addOverall = T,
+    includeNA = T
+  ),
+  showAllLevels = F,
+  print = T,
+  format = "f",
+  nonnormal = c('PFOA', "PFOS", 'PFNA', 'PFHxS')
+),
+'outputs/Table/Outcomestable_COUNTS.csv')
+
+#WEIGHTED (these are %)
+write.csv(
+  print(
+    svyCreateTableOne(
+      vars = varsofinterest,
+      strata = 'MAINOUTCOME',
+      data = nhanes_design,
+      test = F,
+      addOverall = T
+    ),
+    print = T,
+    format = 'p',
+    nonnormal = c('PFOA', "PFOS", 'PFNA', 'PFHxS')
+  ),
+  'outputs/Table/Outcomestable_COUNTS.csv'
 )
+
 
 
 #Survey weighted median and standard error of median - NOT TO USE
@@ -91,33 +117,3 @@ nhanes_design <- svydesign(
 
 ############################################################
 
-#OUTCOME TABLE
-#First specifying variables of interest
-varsofinterest <- c('Year', "Gender", "Age", "Ethnicity", "Education", "Povertytoincomeratio", "Diabetes", "BMI_class", "Smoking", "Hypertension", "Menopause2", "Heartdisease", 'Diet', 'Occupation2')
-
-#creating and outputting table - SURVEY WEIGHTED
-write.csv(print(
-  svyCreateTableOne(
-    vars = varsofinterest,
-    strata = 'MAINOUTCOME',
-    data = nhanes_design,
-    addOverall = T,
-    test = F
-  ),
-  showAllLevels = F,
-  print = F
-), 'outputs/Table/Outcomes_weighted.csv')
-
-#UNWEIGHTED
-write.csv(print(
-  CreateTableOne(
-    vars = varsofinterest,
-    strata = 'MAINOUTCOME',
-    data = FINAL_BASEDATASET,
-    test = F,
-    addOverall = T
-  ),
-  showAllLevels = F,
-  print = T
-),
-'outputs/Table/Outcomes.csv')
