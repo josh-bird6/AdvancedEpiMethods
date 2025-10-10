@@ -106,10 +106,6 @@ FINAL_BASEDATASET <- bind_rows(
   `2015-16`,
   `2017-18`
   ) %>%                           #(n = 17,851)
-  #exclusion criteria
-  filter(Age >= 18,               #filtering out all observations under 18y/o (n = 14,965),        
-         !is.na(PFOA),            #filtering out all observations with missing exposure data (individuals missing one measurement are missing them all, n = 13,828) 
-         !is.na(mortstat)) %>%    #filtering out all observations with missing outcome data (n = 13,798)       
   #defining causes of death (i.e. outcome)
   mutate(
     `Cause of death` = case_when(
@@ -125,49 +121,47 @@ FINAL_BASEDATASET <- bind_rows(
       ucod_leading == 10 ~ "All other causes"
     ),
     MAINOUTCOME = case_when(ucod_leading == 1 | ucod_leading == 2 | ucod_leading == 3 | ucod_leading == 5 | ucod_leading == 6 | ucod_leading == 7 | ucod_leading == 9 ~ 1,
-                            T ~ 0)
-  )
-
-#Creating tertiles to categorise each of four exposures into low, medium and high
-FINAL_BASEDATASET <- FINAL_BASEDATASET %>%
-  #First we are going to transform the exposure scales. They are heavily right-skewed, so going to log transform and then scale (mean = 0, SD = 1)
-  mutate(PFOA_scaled = as.numeric(scale(log(PFOA))),
-         PFOS_scaled = as.numeric(scale(log(PFOS))),
-         PFNA_scaled = as.numeric(scale(log(PFNA))),
-         PFHxS_scaled = as.numeric(scale(log(PFHxS))),
-  #to tertiles - but we're no longer going with this approach
-  # mutate(PFOA_tertile = cut(PFOA,
-  #                           (quantile(FINAL_BASEDATASET$PFOA, c(0:3/3))),
-  #                           include.lowest = T,
-  #                           labels = c("Low", "Medium", "High")),
-  #        PFOS_tertile = cut(PFOS,
-  #                           (quantile(FINAL_BASEDATASET$PFOS, c(0:3/3))),
-  #                           include.lowest = T,
-  #                           labels = c("Low", "Medium", "High")),
-  #        PFNA_tertile = cut(PFNA,
-  #                           (quantile(FINAL_BASEDATASET$PFNA, c(0:3/3))),
-  #                           include.lowest = T,
-  #                           labels = c("Low", "Medium", "High")),
-  #        PFHxS_tertile = cut(PFHxS,
-  #                            (quantile(FINAL_BASEDATASET$PFHxS, c(0:3/3))),
-  #                            include.lowest = T,
-  #                            labels = c("Low", "Medium", "High")),
-         #Some additional transformations of covariates
-         Ethnicity = case_when(Ethnicity == 'Other Hispanic' | Ethnicity == 'Mexican American' ~ 'Hispanic',
-                               T ~ Ethnicity),
-         Education = str_to_lower(Education),
-         Education = case_when(Education %in% c("9-11th grade (includes 12th grade with no diploma)", "less than 9th grade") ~ 'Some high school or below',
-                                Education %in% c('high school graduate/ged or equivalent', 'high school grad/ged or equivalent') ~ 'High School/GED or equivalent',
-                                T ~ Education),
-         BMI_class = case_when(BMI <25 ~ 'Normal weight',
-                               BMI >=25 & BMI <30 ~ 'Overweight',
-                               BMI >=30 ~ 'Obese'),
-         Menopause2 = case_when(Menopause == 'No' | Gender == 'Female' & Age >= 60 ~ "Yes",
-                                T ~ "No"),
-         Occupation2 = case_when(Occupation == 'Working at a job or business,' ~ 'Employed',
-                                Occupation == 'With a job or business but not at work,'|Occupation == "Looking for work, or"|Occupation =='Not working at a job or business?' ~ 'Not employed',
-                                T ~ Occupation)
-  ) %>% 
+                            T ~ 0),
+    #Calibrating weight based on number of survey cycles
+    Weight_pool = Weight/8,
+    #Creating follow-up time variable
+    fu_time = (Age * 12) + permth_int,
+    
+    #NOW FOR SOME WRANGLING
+    #First we are going to transform the exposure scales. They are heavily right-skewed, so going to log transform and then scale (mean = 0, SD = 1)
+    PFOA_scaled = as.numeric(scale(log(PFOA))),
+    PFOS_scaled = as.numeric(scale(log(PFOS))),
+    PFNA_scaled = as.numeric(scale(log(PFNA))),
+    PFHxS_scaled = as.numeric(scale(log(PFHxS))),
+    #Miscellaneous variable formatting
+    Ethnicity = case_when(Ethnicity == 'Other Hispanic' | Ethnicity == 'Mexican American' ~ 'Hispanic',
+                          T ~ Ethnicity), 
+    Education = str_to_lower(Education),
+    Education = case_when(
+      Education %in% c(
+        "9-11th grade (includes 12th grade with no diploma)",
+        "less than 9th grade"
+      ) ~ 'Some high school or below',
+      Education %in% c(
+        'high school graduate/ged or equivalent',
+        'high school grad/ged or equivalent'
+      ) ~ 'High School/GED or equivalent',
+      T ~ Education
+    ), 
+    Education = str_to_title(Education),
+    BMI_class = case_when(BMI < 25 ~ 'Normal weight',
+                          BMI >= 25 & BMI < 30 ~ 'Overweight',
+                          BMI >= 30 ~ 'Obese'), 
+    Menopause2 = case_when(Menopause == 'No' | Gender == 'Female' & Age >= 60 ~ "Yes", 
+                           T ~ "No"), 
+    Occupation2 = case_when(Occupation == 'Working at a job or business,' ~ 'Employed', Occupation == 'With a job or business but not at work,' | Occupation == "Looking for work, or" | Occupation == 'Not working at a job or business?' ~ 'Not employed',
+                            T ~ Occupation), 
+           #Finally, creating a binary flag for all cause mortality (to be explored in secondary analysis)
+    Allcausemortality = case_when(!is.na(`Cause of death`) ~ 1,
+                                         T ~ 0)
+    ) %>% 
+  #some people do not have weights applied, so they are removed
+  filter(!is.na(Weight_pool)) %>% 
   rename(`Povertytoincomeratio` = Income) %>% 
   select(MAINOUTCOME, Year, SEQN, PFOA, PFOA_scaled, PFOS, PFOS_scaled, PFNA, PFNA_scaled, PFHxS, PFHxS_scaled, everything(), -diabetes, -hyperten, -eligstat, -Menopause)
 
