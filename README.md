@@ -25,5 +25,4 @@ If you wish to reproduce the analysis step by step, go into the ```Code``` subfo
   - All the main results from the complete case and MICE analysis are output in ```Forestplot.R```
   - Miscellaneous visualisations are performed in ```Vis.R```
 
-Contact: Joshua Bird (joshua.bird@bccsu.ubc.ca)
-Following the production of all these models, they are then assessed in the ```diagnostics``` code chunk. And at last they are pulled together into readable tables in ```forestplot```. 
+Contact: Joshua Bird (joshua.bird@bccsu.ubc.ca) 
