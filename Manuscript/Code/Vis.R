@@ -1,91 +1,88 @@
-#Some initial visualisation for exploratory data purposes
-
 #visualising cause of death
-FINAL_BASEDATASET %>% 
+  bind_rows(
+    `2003-04`,
+    `2005-06`,
+    `2007-08`,
+    `2009-10`,
+    `2011-12`,
+    `2013-14`,
+    `2015-16`,
+    `2017-18`
+  ) %>%                           #(n = 17,851)
+  #defining causes of death (i.e. outcome)
+  mutate(
+    `Cause of death` = case_when(
+      ucod_leading == 1 ~ "Diseases of heart",
+      ucod_leading == 2 ~ "Malignant neoplasms",
+      ucod_leading == 3 ~ "Chronic lower respiratory diseases",
+      ucod_leading == 4 ~ "Accidents (unintentional injuries)",
+      ucod_leading == 5 ~ "Cerebrovascular diseases",
+      ucod_leading == 6 ~ "Alzheimer’s disease",
+      ucod_leading == 7 ~ "Diabetes mellitus",
+      ucod_leading == 8 ~ "Influenza and pneumonia",
+      ucod_leading == 9 ~ "Nephritis, nephrotic syndrome and nephrosis",
+      ucod_leading == 10 ~ "All other causes"
+    ),
+    MAINOUTCOME = case_when(ucod_leading == 1 | ucod_leading == 2 | ucod_leading == 3 | ucod_leading == 5 | ucod_leading == 6 | ucod_leading == 7 | ucod_leading == 9 ~ 1,
+                            T ~ 0)) %>% 
   filter(!is.na(`Cause of death`),
-         MAINOUTCOME == 1) %>% 
+         MAINOUTCOME == 1,
+         Age >= 18,               #filtering out all observations under 18y/o (n = 14,007),        
+         !is.na(PFOA),            #filtering out all observations with missing exposure data (individuals missing one measurement are missing them all, n = 12,968) 
+         !is.na(mortstat)) %>% 
   group_by(`Cause of death`) %>% 
   summarise(total = n(),
-            prop = (total/sum(FINAL_BASEDATASET$MAINOUTCOME))*100) %>% 
+            prop = (total/sum(FINAL_BASEDATASET_regression$MAINOUTCOME))*100) %>% 
   mutate(label = paste0(total, " (",round(prop,1), "%)")) %>% 
   ggplot(aes(x = reorder(`Cause of death`, prop), y = total)) +
   geom_col()+
   coord_flip() + 
   theme_bw() +
-  geom_text(aes(label = label), hjust = -.1) +
+  geom_text(aes(label = label, fontface = 'bold'), hjust = -.1, size = 5) +
   labs(x = "",
        caption = 'n = 1,116',
        y = 'Deaths') +
   scale_y_continuous(limits = c(0,600)) +
   scale_x_discrete(labels = scales::label_wrap(22)) +
   theme(axis.text.x = element_text(size = 15),
-        axis.text.y = element_text(size = 13.5))
+        axis.text.y = element_text(size = 13.5),
+        plot.caption = element_text(size = 13.5))
 
 ##################################################################
 
 #Ad hoc chart of publications by year
-readxl::read_excel('Data/PubMed_Timeline_Results_by_Year.xlsx') %>% 
+# readxl::read_excel('Data/PubMed_Timeline_Results_by_Year.xlsx') %>% 
+read_csv('Data/PubMed_Timeline_Results_by_Year.csv') %>% 
   ggplot(aes(x = Year, y = Count)) +
   geom_col() +
   theme_bw() +
   labs(y = 'Number of peer-reviewed publications') +
   scale_x_continuous(breaks = seq(2000,2025, 2)) +
-  theme(axis.text.x = element_text(size = 15),
-        axis.text.y = element_text(size = 13.5))
-
-##################################################################
-#Combined KM chart (along with creating new follow up time variable in years)
-
-
-survfit2(Surv(time, MAINOUTCOME) ~ Gender, data = (FINAL_BASEDATASET %>%
-                                                mutate(time = (Age * 12) + permth_int, time = time / 12))) %>%
-  ggsurvfit() +
-  labs(x = 'Follow-up time (years)', y = 'Survival probability') +
-  theme(legend.position = 'none') +
-  add_confidence_interval()
+    theme(legend.position = 'bottom',
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          axis.text = element_text(size = 13),
+          legend.text = element_text(size = 12))
+  
+  ggsave("outputs/Vis/Timeseries2.png", dpi = 300, height = 5, width = 8, units = 'in')
+  
 
 
 
-# km_vis <- function(chemical) {
-#   
-#   FINAL_BASEDATASET %>% 
-#     mutate(time = (Age *12)+permth_int,
-#            time = time/12) %>% 
-#     select(chemical, time, MAINOUTCOME)
-# }
-# 
-# #plotting using cowplot package
-# plot_grid((survfit2(Surv(time, MAINOUTCOME) ~ 1, data = km_vis('PFOA')) %>% 
-#              ggsurvfit() +
-#              labs(x = '',
-#                   y = 'Survival probability',
-#                   title = "PFOA") +
-#              theme(legend.position = 'none') +
-#              add_confidence_interval()),
-#           (survfit2(Surv(time, MAINOUTCOME) ~ 1, data = km_vis('PFOS')) %>% 
-#              ggsurvfit() +
-#              labs(x = '',
-#                   y = '',
-#                   title = "PFOS") +
-#              theme(legend.position = 'none') +
-#              add_confidence_interval()),
-#           (survfit2(Surv(time, MAINOUTCOME) ~ 1, data = km_vis('PFNA')) %>% 
-#              ggsurvfit() +
-#              labs(x = 'Years',
-#                   y = 'Survival probability',
-#                   title = "PFNA") +
-#              add_confidence_interval()),
-#           (survfit2(Surv(time, MAINOUTCOME) ~ 1, data = km_vis('PFHxS')) %>% 
-#              ggsurvfit() +
-#              add_confidence_interval() +
-#              labs(title = "PFHxS",
-#                   y = "",
-#                   x = 'Years')),
-#           nrow = 2)
-
-
-#Definitely been decreasing over time.
-FINAL_BASEDATASET %>% group_by(Year) %>% summarise(
+#Population-level PFAS concentrations have definitely been declining over time
+  bind_rows(
+    `2003-04`,
+    `2005-06`,
+    `2007-08`,
+    `2009-10`,
+    `2011-12`,
+    `2013-14`,
+    `2015-16`,
+    `2017-18`
+  ) %>% 
+    filter(!is.na(PFOA)) %>% 
+    group_by(Year) %>% 
+    summarise(
   PFOA = median(PFOA),
   PFOS = median(PFOS),
   PFNA = median(PFNA),
@@ -93,10 +90,15 @@ FINAL_BASEDATASET %>% group_by(Year) %>% summarise(
 ) %>% 
   pivot_longer(2:5, names_to = 'Analyte', values_to = 'median concentration') %>% 
   ggplot(aes(x = Year, y = `median concentration`, group = Analyte, color = Analyte)) +
-  geom_point() +
-  geom_line() +
-  theme_bw() +
-  labs(y = 'Median concentration (µg/mL)',
+  geom_point(size = 3) +
+  geom_line(size = 1.5) +
+  labs(y = 'Median PFAS concentration (µg/mL)',
        x = 'Survey year') +
-  theme(legend.position = 'bottom')
-
+    theme_bw()+
+  theme(legend.position = 'bottom',
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.text = element_text(size = 13),
+        legend.text = element_text(size = 12))
+  
+  ggsave("outputs/Vis/Timeseries.png", dpi = 300, height = 5, width = 8, units = 'in')
