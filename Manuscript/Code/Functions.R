@@ -5,10 +5,10 @@ library(nhanesA)
 library(tableone)
 library(survival)
 library(ggsurvfit)
-library(cowplot)
 library(survey)
-library(flextable)
-library(rms)
+library(gtsummary)
+library(gt)
+library(mice)
 
 #Creating function to read in all the mortality data
 #Downloaded directly from the CDC website: https://ftp.cdc.gov/pub/Health_Statistics/NCHS/datalinkage/linked_mortality/
