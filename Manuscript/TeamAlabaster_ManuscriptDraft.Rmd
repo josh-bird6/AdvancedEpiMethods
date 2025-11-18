@@ -1,0 +1,1427 @@
+---
+title: 'Draft Manuscript: Team Alabaster'
+output: pdf_document
+date: "2025-11-07"
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = T, warning = F, message = F)
+
+#Libraries
+
+if (!requireNamespace("pacman", quietly = TRUE)) {
+      install.packages("pacman", repos = "http://cran.us.r-project.org")
+}
+
+library(pacman)
+
+p_load(tidyverse, nhanesA, tableone, survival, ggsurvfit, survey, gtsummary, gt, mice, rms, flextable, mitools, svyTable1, VIM)
+
+```
+
+## Introduction
+
+This document details all the code necessary to reproduce the analysis presented in our Methods and Results draft for Team Alabaster.
+
+After reading in all the libraries in `setup`, the first code chunk (`functions`) defines the functions which are used to extract and format data presented throughout the document. In the `base_wrangling` code chunk, these functions are deployed for data across all the years which are then concatenated into the base dataset. After this is created, the survey design object is completed in `survey_design`, following which Table 1 (stratified by outcome) is produced the `tables` code chunk.
+
+Following this data preparation and descriptive analysis, the statistical analysis begins. This is self-explanatory: the bivariable analysis is conducted in ```bivariable_analysis```, and then the multivariable analysis (complete case) in ```mutlivariable COMPLETE CASE```. Then the multiple imputation by chained equations (MICE) procedure begins. The data are explored to confirm MAR, and then imputed in ```MICE_setup```, and the actual analysis using imputed datasets is in ```MICE_analysis```. Subgroup analysis by age category is performed in ```subgroup_analysis```.
+
+Following the production of all these models, they are then assessed in the ```diagnostics``` code chunk. And at last they are pulled together into readable tables in ```forestplot```. 
+
+## Functions code
+
+```{r functions}
+#This code chunk defines all the functions used to extract data.
+#Creating function to read in all the mortality data
+#Downloaded directly from the CDC website: https://ftp.cdc.gov/pub/Health_Statistics/NCHS/datalinkage/linked_mortality/
+readfun <- function(df) {
+  read_fwf(
+    paste0('Data/NHANES_', df, '_MORT_2019_PUBLIC.dat'),
+    col_types = 'iiiiiiii',
+    fwf_cols(
+      SEQN = c(1, 6),
+      eligstat = c(15, 15),
+      mortstat = c(16, 16),
+      ucod_leading = c(17, 19),
+      diabetes = c(20, 20),
+      hyperten = c(21, 21),
+      permth_int = c(43, 45),
+      permth_exm = c(46, 48)
+    ),
+    na = c('', '.')
+  )
+}
+######################################################
+#Function for extracting data ONLY FOR FIRST 5 WAVES OF TIME SERIES (2013/14 to 2011/12)
+
+#Calls for fourteen arguments: 
+#t#Calls for fourteen arguments: 
+#the year of laboratory data; year of demographic data; diabetes (questionnaire), BMI (exam), smoking (exam), hypertension (questionnaire), menstraul cycle (questionnaire), heart disease (quesitonnaire), kidney (laboratory), occupation (exam), diet (exam), cholesterol (laboratory); survey weights FROM THE LABORATORY DATA (as per NHANES documentation); the year, and relevant year of mortality data
+
+
+extractfun <- function(lab, demo, diabetes, BMI, Smoking, SmokingCurrent, Hypertension, Menopause, Heartdisease, Kidney, Cholesterol, Occupation, Diet, weight, year, mortdat){
+  left_join(nhanes(lab), nhanes(demo), by = 'SEQN') %>%  #joining lab and demo data
+    left_join(nhanes(diabetes), by = 'SEQN') %>%         #joining diabetes data (questionnaire)
+    left_join(nhanes(BMI), by = 'SEQN') %>%              #joining BMI data (exam)
+    left_join(nhanes(Smoking), by = 'SEQN') %>%          #joining smoking data (questionnaire)
+    left_join(nhanes(Hypertension), by = 'SEQN') %>%     #joining hypertension data (questionnaire)
+    left_join(nhanes(Menopause), by = 'SEQN') %>%        #joining menstrual cycle data (questionnaire)
+    left_join(nhanes(Heartdisease), by = 'SEQN') %>%     #joining heart disease data (questionnaire)
+    left_join(nhanes(Kidney), by = 'SEQN') %>%           #joining kidney data (laboratory data)
+    left_join(nhanes(Occupation), by = 'SEQN') %>%       #joining occupation data (exam)
+    left_join(nhanes(Diet), by = 'SEQN') %>%             #joining diet information (exam)
+    left_join(nhanes(Cholesterol), by = 'SEQN') %>%      #joining cholesterol information (laboratory data)
+    rename(Weight = weight,
+           PFOA = LBXPFOA,
+           PFOS = LBXPFOS,
+           PFNA = LBXPFNA,
+           PFHxS = LBXPFHS,
+           Gender = RIAGENDR,
+           Age = RIDAGEYR,
+           Ethnicity = RIDRETH1,
+           Education = DMDEDUC2,
+           Education2 = DMDEDUC3,
+           Income = INDFMPIR,
+           Diabetes = DIQ010,
+           BMI = BMXBMI, 
+           Smoking = SMQ020,
+           SmokingCurrent = SMQ040,
+           Hypertension = BPQ020,
+           Menopause = RHQ031,
+           Heartdisease = MCQ160C,
+           Kidney = LBXSCR,
+           Cholesterol = LBXTC,
+           Occupation = OCD150,
+           Occupation_unemp = OCQ380,
+           Diet = DRD360,
+           Pregnancy = RIDEXPRG,
+           PseudoPSU = SDMVPSU,
+           PseudoStratum = SDMVSTRA) %>% 
+    #creating year variable
+    mutate(Year = year) %>%
+    #selecting relevant variables
+    select(Year, SEQN, PFOA, PFOS, PFNA, PFHxS, Gender, Age, Ethnicity, Education, Education2, Income, Diabetes, BMI, Smoking, SmokingCurrent, Hypertension, Menopause, Heartdisease, Kidney, Cholesterol, Pregnancy, Occupation, Occupation_unemp, Diet, Weight, PseudoPSU, PseudoStratum) %>% 
+    #joining mortality data
+    left_join(mortdat, by = 'SEQN')
+}
+
+
+######################################################
+#2013/14 is where the PFAS reporting in NHANES changes - see next code chunk
+
+#2015/16 and 2017/18 are more straightforward, but require a separate function (because the exposures are not formatted the exact same as in previous years)
+
+extractfun_latter <- function(lab, demo, diabetes, BMI, Smoking, Hypertension, Menopause, Heartdisease, Kidney, Cholesterol, Occupation, Diet, year, mortdata) {
+  
+  left_join(nhanes(lab), nhanes(demo), by = 'SEQN') %>% 
+    left_join(nhanes(diabetes), by = 'SEQN') %>%         #joining diabetes data (questionnaire)
+    left_join(nhanes(BMI), by = 'SEQN') %>%              #joining BMI data (exam)
+    left_join(nhanes(Smoking), by = 'SEQN') %>%          #joining smoking data (laboratory)
+    left_join(nhanes(Hypertension), by = 'SEQN') %>%     #joining hypertension data (questionnaire)
+    left_join(nhanes(Menopause), by = 'SEQN') %>%        #joining menstrual cycle data (questionnaire)
+    left_join(nhanes(Heartdisease), by = 'SEQN') %>%     #joining heart disease data (questionnaire)
+    left_join(nhanes(Kidney), by = 'SEQN') %>%           #joining kidney data (laboratory data)
+    left_join(nhanes(Occupation), by = 'SEQN') %>%       #joining occupation data (exam)
+    left_join(nhanes(Diet), by = 'SEQN') %>%             #joining diet information (exam)
+    left_join(nhanes(Cholesterol), by = 'SEQN') %>%      #joining cholesterol data (exam)
+    #Summing PFOA and PFOS (because they are disaggregated)
+    mutate(PFOA = LBXNFOA + LBXBFOA,
+           PFOS = LBXNFOS + LBXMFOS,
+           Year = year) %>% 
+    rename(Weight = WTSB2YR,
+           PFNA = LBXPFNA,
+           PFHxS = LBXPFHS,
+           Gender = RIAGENDR,
+           Age = RIDAGEYR,
+           Ethnicity = RIDRETH1,
+           Education = DMDEDUC2,
+           Education2 = DMDEDUC3,
+           Income = INDFMPIR,
+           Diabetes = DIQ010,
+           BMI = BMXBMI, 
+           Smoking = SMQ020,
+           SmokingCurrent = SMQ040,
+           Hypertension = BPQ020,
+           Menopause = RHQ031,
+           Heartdisease = MCQ160C,
+           Kidney = LBXSCR,
+           Cholesterol = LBXTC,
+           Occupation = OCD150,
+           Occupation_unemp = OCQ380,
+           Diet = DRD360,
+           Pregnancy = RIDEXPRG,
+           PseudoPSU = SDMVPSU,
+           PseudoStratum = SDMVSTRA) %>% 
+    select(Year, SEQN, PFOA, PFOS, PFNA, PFHxS, Gender, Age, Ethnicity, Education, Education2, Income, Diabetes, BMI, Smoking, SmokingCurrent, Hypertension, Menopause, Heartdisease, Kidney, Cholesterol, Pregnancy, Occupation, Occupation_unemp, Diet, Weight, PseudoPSU, PseudoStratum) %>% 
+    #Joining mortality data
+    left_join(mortdata, by = 'SEQN') 
+}
+
+######################################################
+#Defining funciton for calculating glomerular filtration rate, used to assess presence of chronic kidney disease 
+eGFR_rate <- function(creatinine, age, sex) {
+  
+  # define constant for sex
+  k <- ifelse(sex == "Female", 0.7, 0.9)
+  a <- ifelse(sex == "Female", -0.241, -0.302)
+  factor_sex <- ifelse(sex == "Female", 1.012, 1)
+  
+  # Calculate eGFR
+  egfr <- 142 * (pmin(creatinine / k, 1) ^ a) * 
+    (pmax(creatinine / k, 1) ^ -1.200) * 
+    (0.9938 ^ age) * factor_sex
+  
+  return(egfr)
+}
+
+######################################################
+#EXPOSURE TABLE
+
+#Defining function which extracts and formats exposure data for each analyte
+exposure_extraction_fun <- function(Analyte, PFAS){
+  
+  q1 <- quantile(Analyte, 0.25) %>% data.frame()
+  med <- median(Analyte) %>% data.frame()
+  q3 <- quantile(Analyte, 0.75) %>% data.frame()
+  mini <- min(Analyte) %>% data.frame()
+  maxi <- max(Analyte) %>% data.frame()
+  
+  bind_cols(med, q1,q3, mini, maxi) %>%
+    mutate(`Median [1Q-3Q]` = paste0(round(....1, 2), " (", ....2, '-', `....3`, ")"),
+           Substance = PFAS) %>%
+    rename(Min =  `....4`,
+           Max = `....5`) %>%
+    select(Substance, `Median [1Q-3Q]`, Min, Max)
+  
+}
+
+#######################################################
+#COMPLETE CASE
+#Function for extracting data from Cox models
+
+#Univariate
+univariate <- function(exp, outcome){
+  
+  formula <- as.formula(paste("Surv(permth_int, ", outcome, ") ~ ", exp))
+  
+  svycoxph(formula, design = nhanes_design) %>% 
+    tbl_regression(exponentiate = T)
+  
+}
+
+#Multivariate
+multivariate <- function(exp, outcome, designobj){
+  
+  formula <- as.formula(paste("Surv(permth_int, ", outcome, ") ~ ", exp, "+ Year + rms::rcs(Age, 4) + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet + Diabetes + BMI_class + Hypertension + ChronicKidneyDisease + Hyperlipidemia"))
+  
+   svycoxph(formula, design = designobj) %>% 
+     tbl_regression(exponentiate = T,
+                    include = exp) 
+  
+}
+#####################################################
+#Function for extracting data from Cox models - WITH INTERACTION TERMS
+
+multivariate_interaction <- function(exp, outcome, designobj, PFAS1, PFAS2, PFAS3){
+  
+  formula <- as.formula(paste("Surv(permth_int, ", outcome, ") ~ ", exp, " + Year + rms::rcs(Age, 4) + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet + Diabetes + BMI_class + Hypertension + ChronicKidneyDisease + Hyperlipidemia +",
+                              exp, "*", PFAS1, "+",  exp, "*", PFAS2, "+",  exp, "*", PFAS3))
+  
+  svycoxph(formula, design = designobj) %>% 
+    tbl_regression(exponentiate = T,
+                   include = exp) 
+  
+}
+###################################################
+#MICE
+#First creating a function to fit fully adjusted regression model 
+multivariate_MICE <- function(exp, outcome) {
+  with(design_analytic, 
+    svycoxph(as.formula(
+    paste(
+      "Surv(permth_int, ",
+      outcome,
+      ") ~",
+      exp,
+      "+ Year + rms::rcs(Age, 4) + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet + Diabetes + BMI_class + Hypertension + ChronicKidneyDisease + Hyperlipidemia"
+    ))
+  ))
+}
+
+##################################################
+#MICE with interaction terms
+multivariate_MICE_interaction <- function(exp, outcome, PFAS1, PFAS2, PFAS3) {
+  with(design_analytic, 
+       svycoxph(as.formula(
+         paste(
+           "Surv(permth_int, ",
+           outcome,
+           ") ~",
+           exp,
+           "+ Year + rms::rcs(Age, 4) + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet + Diabetes + BMI_class + Hypertension + ChronicKidneyDisease + Hyperlipidemia +",
+           exp, "*", PFAS1, "+",  exp, "*", PFAS2, "+",  exp, "*", PFAS3
+         ))
+       ))
+}
+##################################################
+
+#A function for formatting results from MICE
+pool_and_format_results <- function(fit_mira) {
+  # 'MIcombine' applies Rubin's Rules to pool the estimates from each imputed dataset.
+  pooled <- mitools::MIcombine(fit_mira)
+  
+  # Exponentiate the coefficients and confidence intervals to get HRs.
+  HR_estimates <- exp(coef(pooled))
+  ci_estimates <- exp(confint(pooled))
+  
+  # Create and return a final data frame, rounding the results for clarity and adding asterisk for p < 0.05.
+  results_df <- data.frame(
+    HR = round(HR_estimates, 3),
+    `2.5%` = round(ci_estimates[, 1], 3),
+    `97.5%` = round(ci_estimates[, 2], 3)
+  ) %>% 
+    mutate(`HR (95% CI)` = paste0(HR, " (", X2.5., ", ", X97.5., ")"),
+           sig = case_when(X2.5. > 1 & X97.5. > 1 | X2.5. < 1 & X97.5. < 1 ~ "*",
+                                     T ~ "")) %>% 
+    rename(lower = X2.5.,
+           upper = X97.5.) %>% 
+    slice(1) %>% 
+    rownames_to_column('Characteristic') 
+  
+  return(results_df)
+}
+############################################
+############################################
+############################################
+############################################
+############################################
+############################################
+#FOREST PLOTS
+#Function for extracting data for non-MICE models
+
+extraction_function_models <- function(df, category, spec_outcome){
+  df %>% 
+    as.data.frame() %>% 
+    separate_wider_delim(`**95% CI**`, ", ", names = c("lower", "upper")) %>% 
+    rename(Characteristic = `**Characteristic**`,
+           HR = `**HR**`) %>% 
+    mutate(cat = category,
+           outcome = spec_outcome,           
+           HR = as.numeric(HR),
+           lower = as.numeric(lower),
+           upper = as.numeric(upper),
+           sig = case_when(`**p-value**` <.05 ~ "*",
+                           T ~ "")) %>% 
+    select(-5)
+}
+
+####################################################
+#Function for extracting MICE models
+extraction_function_models_MICE <- function(df, category, spec_outcome) {
+  df %>% 
+    tibble() %>% 
+    mutate(cat = category,
+           outcome = spec_outcome) %>% 
+    select(Characteristic, HR, lower, upper, cat, outcome, sig)  
+} 
+
+#####################################################
+#Function for outputting forest plot
+
+forestplot_fun <- function(df, OUTCOME){
+  df %>% 
+    filter(outcome == OUTCOME) %>% 
+    mutate(cat3 = case_when(cat == 'Univariate' ~ cat,
+                            T~ cat3),
+           `Missingness treatment` = as.factor(`Missingness treatment`),
+           `Missingness treatment` = fct_relevel(`Missingness treatment`, c('Univariate analysis \n(n = 13,798)',
+                                                                            'Complete case \n(n = 10,630)',
+                                                                            'MICE \n(n = 13,798)'))) %>% 
+    ggplot(aes(x = Characteristic, y = HR, ymin = lower, ymax = upper,  color = `Missingness treatment`, linetype = `Missingness treatment`)) +
+    
+    geom_linerange(position = position_dodge2(width = 0.5, reverse = 2), size = 1, key_glyph = 'path') +
+    scale_linetype_manual(values = c('longdash', 'solid', 'solid')) +
+    geom_point(position = position_dodge2(width = 0.5, reverse = T), size = 2) +
+    scale_color_manual(values = c('#000000','#000000', '#888888'))+
+    facet_wrap(~factor(cat3, levels = c('Univariate', 'Multivariate adjusted', 'Multivariate adjusted + interaction')), nrow = 3) +
+    geom_hline(yintercept = 1) +
+    coord_flip() +
+    theme_bw()+
+    theme(legend.position = 'bottom') +
+    scale_y_continuous(limits = c(.68, 1.7)) + 
+    labs(title = OUTCOME) +
+    geom_text(aes(label = paste0("HR: ", round(HR,2), " [CI: ", round(lower,2), ", ", round(upper,2), "]")), y = 1.44, position = position_dodge2(width = 0.9, reverse = T), hjust = 0, show.legend = F) 
+}
+```
+
+## Base wrangling and base dataset creation
+
+```{r base_wrangling}
+#Be sure to read in functions from previous code chunk
+
+#################################################
+#Reading in mortality data by year
+data_mort_0304 <- readfun('2003_2004')
+data_mort_0506 <- readfun('2005_2006')
+data_mort_0708 <- readfun('2007_2008')
+data_mort_0910 <- readfun('2009_2010')
+data_mort_1112 <- readfun('2011_2012')
+data_mort_1314 <- readfun('2013_2014')
+data_mort_1516 <- readfun('2015_2016')
+data_mort_1718 <- readfun('2017_2018')
+
+#################################################
+#Extracting data for for 2003-04 through 2011-12
+`2003-04` <- extractfun('L24PFC_C', 'DEMO_C', 'DIQ_C', 'BMX_C', 'SMQ_C', 'SMQ_C', 'BPQ_C', 'RHQ_C', 'MCQ_C', 'L40_C', 'l13_c', "OCQ_C", "DR1TOT_C", 'WTSA2YR', "2003-04", data_mort_0304) 
+
+`2005-06` <- extractfun('PFC_D', 'DEMO_D', 'DIQ_D', 'BMX_D', 'SMQ_D', 'SMQ_D', 'BPQ_D', 'RHQ_D', 'MCQ_D', 'BIOPRO_D', 'TCHOL_D', "OCQ_D", 'DR1TOT_D', 'WTSA2YR', '2005-06', data_mort_0506)
+
+`2007-08` <- extractfun('PFC_E', 'DEMO_E', 'DIQ_E', 'BMX_E', 'SMQ_E', 'SMQ_E', 'BPQ_E', 'RHQ_E', 'MCQ_E', 'BIOPRO_E', 'TCHOL_E', "OCQ_E", 'DR1TOT_E', "WTSC2YR", '2007-08', data_mort_0708)
+
+`2009-10` <- extractfun('PFC_F', 'DEMO_F', 'DIQ_F', 'BMX_F', 'SMQ_F', 'SMQ_F', 'BPQ_F', 'RHQ_F', 'MCQ_F', 'BIOPRO_F', 'TCHOL_F', "OCQ_F", 'DR1TOT_F', "WTSC2YR", '2009-10', data_mort_0910)
+
+`2011-12` <- extractfun('PFC_G', 'DEMO_G', 'DIQ_G', 'BMX_G', 'SMQ_G', 'SMQ_G', 'BPQ_G', 'RHQ_G', 'MCQ_G', 'BIOPRO_G', 'TCHOL_G', "OCQ_G", 'DR1TOT_G', "WTSA2YR", '2011-12', data_mort_1112)
+
+######################
+######################
+######################
+######################
+######################
+######################
+#2013/14 is where it gets complicated
+
+#first we need to grab the PFAS data for the four chemicals, which are located in two different survey modules
+#Then combine measurements for *PFOA and PFOS ONLY*
+
+`2013-14` <- left_join(
+  #First for PFOA and PFOS
+  (nhanes('SSPFAS_H') %>% 
+     mutate(PFOA = SSNPFOA + SSBPFOA,
+            PFOS = SSNPFOS + SSMPFOS) %>% 
+     select(SEQN, WTSSBH2Y, PFOA, PFOS)),
+  #Then for PFNA, PFHxS, which are single measurements (do not require combining)
+  (nhanes('PFAS_H') %>%
+     rename(PFNA = LBXPFNA,
+            PFHxS = LBXPFHS) %>% 
+     select(SEQN, PFNA, PFHxS)),
+  by = 'SEQN'
+) %>% 
+  left_join(nhanes('DEMO_H'), by = 'SEQN') %>%        #joining sociodemographic data
+  left_join(nhanes('DIQ_H'), by = 'SEQN') %>%         #joining diabetes data (questionnaire)
+  left_join(nhanes('BMX_H'), by = 'SEQN') %>%         #joining BMI data (exam)
+  left_join(nhanes('SMQ_H'), by = 'SEQN') %>%         #joining smoking data (laboratory)
+  left_join(nhanes('BPQ_H'), by = 'SEQN') %>%         #joining hypertension data (questionnaire)
+  left_join(nhanes('RHQ_H'), by = 'SEQN') %>%         #joining menstrual cycle data (questionnaire)
+  left_join(nhanes('MCQ_H'), by = 'SEQN') %>%         #joining heart disease data (questionnaire)
+  left_join(nhanes('BIOPRO_H'), by = 'SEQN') %>%      #joining kidney data (laboratory data)
+  left_join(nhanes('OCQ_H'), by = 'SEQN') %>%         #joining occupation data (exam)
+  left_join(nhanes('DR1TOT_H'), by = 'SEQN') %>%      #joining diet information (exam)
+  left_join(nhanes('TCHOL_H'), by = 'SEQN') %>%       #joining cholesterol information (laboratory)
+  rename(Weight = WTSSBH2Y,
+         Gender = RIAGENDR,
+         Age = RIDAGEYR,
+         Ethnicity = RIDRETH1,
+         Education = DMDEDUC2,
+         Education2 = DMDEDUC3,
+         Income = INDFMPIR,
+         Diabetes = DIQ010,
+         BMI = BMXBMI, 
+         Smoking = SMQ020,
+         SmokingCurrent = SMQ040,
+         Hypertension = BPQ020,
+         Menopause = RHQ031,
+         Heartdisease = MCQ160C,
+         Kidney = LBXSCR,
+         Cholesterol = LBXTC,
+         Occupation = OCD150,
+         Occupation_unemp = OCQ380,
+         Diet = DRD360,
+         Pregnancy = RIDEXPRG,
+         PseudoPSU = SDMVPSU,
+         PseudoStratum = SDMVSTRA) %>% 
+  mutate(Year = '2013-14') %>% 
+  select(Year, SEQN, PFOA, PFOS, PFNA, PFHxS, Gender, Age, Ethnicity, Education, Education2, Income, Diabetes, BMI, Smoking, SmokingCurrent, Hypertension, Menopause, Heartdisease, Kidney, Cholesterol, Pregnancy, Occupation, Occupation_unemp, Diet,  Weight, PseudoPSU, PseudoStratum) %>% 
+  left_join(data_mort_1314, by = 'SEQN')
+######################
+######################
+######################
+######################
+######################
+######################
+
+#2015/16 and 2017/18
+
+`2015-16` <- extractfun_latter('PFAS_I', 'DEMO_I', 'DIQ_I', 'BMX_I', 'SMQ_I', 'BPQ_I', 'RHQ_I', 'MCQ_I', 'BIOPRO_I', 'TCHOL_I', "OCQ_I", 'DR1TOT_I', "2015-16", data_mort_1516)
+
+`2017-18` <- extractfun_latter('PFAS_J', 'DEMO_J', 'DIQ_J', 'BMX_J', 'SMQ_J', 'BPQ_J', 'RHQ_J', 'MCQ_J', 'BIOPRO_J', 'TCHOL_J', "OCQ_J", "DR1TOT_J", "2017-18", data_mort_1718)
+
+##################################################
+ #NOW THE FINAL MERGE!
+
+FINAL_BASEDATASET <- bind_rows(
+  `2003-04`,
+  `2005-06`,
+  `2007-08`,
+  `2009-10`,
+  `2011-12`,
+  `2013-14`,
+  `2015-16`,
+  `2017-18`
+  ) %>%                           #(n = 17,851)
+  #defining causes of death (i.e. outcome)
+  mutate(
+    `Cause of death` = case_when(
+      ucod_leading == 1 ~ "Diseases of heart",
+      ucod_leading == 2 ~ "Malignant neoplasms",
+      ucod_leading == 3 ~ "Chronic lower respiratory diseases",
+      ucod_leading == 4 ~ "Accidents (unintentional injuries)",
+      ucod_leading == 5 ~ "Cerebrovascular diseases",
+      ucod_leading == 6 ~ "Alzheimer’s disease",
+      ucod_leading == 7 ~ "Diabetes mellitus",
+      ucod_leading == 8 ~ "Influenza and pneumonia",
+      ucod_leading == 9 ~ "Nephritis, nephrotic syndrome and nephrosis",
+      ucod_leading == 10 ~ "All other causes"
+    ),
+    MAINOUTCOME = case_when(ucod_leading == 1 | ucod_leading == 2 | ucod_leading == 3 | ucod_leading == 5 | ucod_leading == 6 | ucod_leading == 7 | ucod_leading == 9 ~ 1,
+                            T ~ 0),
+    #Calibrating weight based on number of survey cycles
+    Weight_pool = Weight/8,
+    
+    #NOW FOR SOME WRANGLING
+    #First we are going to transform the exposure scales. They are heavily right-skewed, so going to log transform and then scale (mean = 0, SD = 1)
+    PFOA_scaled = as.numeric(scale(log(PFOA))),
+    PFOS_scaled = as.numeric(scale(log(PFOS))),
+    PFNA_scaled = as.numeric(scale(log(PFNA))),
+    PFHxS_scaled = as.numeric(scale(log(PFHxS))),
+    #Miscellaneous variable formatting
+    Ethnicity = case_when(Ethnicity == 'Other Hispanic' | Ethnicity == 'Mexican American' ~ 'Hispanic',
+                          T ~ Ethnicity), 
+    Education = str_to_lower(Education),
+    Education = case_when(
+      Education %in% c(
+        "9-11th grade (includes 12th grade with no diploma)",
+        "less than 9th grade"
+      ) ~ 'Some high school or below',
+      Education %in% c(
+        'high school graduate/ged or equivalent',
+        'high school grad/ged or equivalent'
+      ) ~ 'High School/GED or equivalent',
+      T ~ Education
+    ),
+    Education = str_to_title(Education),
+    Education2 = str_to_lower(Education2),
+    Education3 = case_when(Education2 == 'high school graduate' | Education2 == 'ged or equivalent' ~ 'High School/Ged Or Equivalent',
+                          Education2 == 'more than high school' ~ 'Some College Or Aa Degree',
+                          Education2 == '9th grade' | Education2 =='10th grade' | Education2 =='11th grade' | Education2 =='12th grade, no diploma' | Education2 =='less than 9th grade' ~ 'Some High School Or Below'),
+    EducationHighest = case_when(Age %in% c(18,19) ~ Education3,
+                                 Age >=20~ Education),
+    BMI_class = case_when(BMI < 25 ~ 'Normal weight',
+                          BMI >= 25 & BMI < 30 ~ 'Overweight',
+                          BMI >= 30 ~ 'Obese'), 
+    Menopause2 = case_when(Menopause == 'No' | Gender == 'Female' & Age >= 60 ~ "Yes", 
+                           T ~ "No"), 
+    Occupation2 = case_when(Occupation == 'Working at a job or business,' ~ 'Employed',
+                            Occupation_unemp == 'Taking care of house or family' ~ 'Domestic caregiver',
+                            Occupation_unemp == 'Unable to work for health reasons' | Occupation_unemp == 'Disabled' ~ 'Disabled',
+                            Occupation_unemp == 'Retired' ~ 'Retired',
+                            Occupation == 'With a job or business but not at work,' | Occupation == "Looking for work, or" | Occupation == 'Not working at a job or business?' | Occupation_unemp == 'Going to school' ~ 'Not employed'),
+    # Occupation2 = case_when(Occupation == 'Working at a job or business,' ~ 'Employed', Occupation == 'With a job or business but not at work,' | Occupation == "Looking for work, or" | Occupation == 'Not working at a job or business?' ~ 'Not employed',
+    #                         T ~ Occupation), 
+    #Smoking status, derived from two variables
+    SmokingStatus = case_when(Smoking == 'No' ~ 'Never smoked',
+                              SmokingCurrent == 'Every day' ~ 'Smokes every day',
+                              SmokingCurrent == 'Some days' ~ 'Smokes some days',
+                              SmokingCurrent == 'Not at all' ~ 'Former Smoker'),
+    #Hyperlipidemia variable
+    Hyperlipidemia = case_when(Cholesterol >= 200 ~ "Yes",
+                               Cholesterol <200 ~ 'No'),
+    #Chronic kidney disease - see function in Functions.R
+    eGFR = eGFR_rate(Kidney, Age, Gender),
+    ChronicKidneyDisease = case_when(eGFR < 60 ~ "Yes",
+                                     eGFR >= 60 ~ 'No'),
+    #Replacing all "Refused" and 'Don't know' answers with NA
+    across(c(EducationHighest, Diabetes, Occupation2, Diet, Smoking, Heartdisease), na_if, "Refused"),
+    across(c(Diabetes, Occupation2, Diet, Hypertension, Smoking, Heartdisease), na_if, "Don't know"),
+    across(c(EducationHighest), na_if, "Don't Know"),
+    #Some individuals do not have a weight (n=33) so these are coerced to 0 - they will be filtered out anyway because they have no exposure data
+    Weight_pool = case_when(is.na(Weight_pool) ~ 0,
+                            T ~ Weight_pool),
+    Year2 = case_when(Year == "2003-04" | Year == "2005-06" | Year == "2007-08" ~ "2003 to 2008",
+                     T ~ "2009 to 2018"),
+    #Finally, creating a binary flag for all cause mortality (to be explored in secondary analysis)
+    Allcausemortality = case_when(!is.na(`Cause of death`) ~ 1,
+                                         T ~ 0),
+    Age_category = case_when(Age >= 18 & Age <40 ~ "18-39",
+                             Age >=40 & Age <60 ~ "40-59",
+                             Age >=60 & Age <80 ~ "60-79",
+                             T ~ '80 and up'),
+    Age_binary = case_when(Age >= 65 ~ "65 and over",
+                           T ~ "Under 65"),
+    #Bunch of releveling
+    Occupation2 = relevel(as.factor(Occupation2), ref = "Not employed"),
+    Ethnicity = relevel(as.factor(Ethnicity), ref = 'Non-Hispanic White'),
+    EducationHighest = factor(EducationHighest, levels = c("Some High School Or Below", "High School/Ged Or Equivalent", "Some College Or Aa Degree", "College Graduate Or Above")),
+    SmokingStatus = factor(SmokingStatus, levels = c("Never smoked", "Former Smoker", "Smokes some days", "Smokes every day")),
+    Diabetes = relevel(as.factor(Diabetes), ref = 'No'),
+    Hypertension = relevel(as.factor(Hypertension), ref = 'No'),
+    Heartdisease = relevel(as.factor(Heartdisease), ref = 'No'),
+    Diet = relevel(as.factor(Diet), ref = 'No'),
+    Hyperlipidemia = relevel(as.factor(Hyperlipidemia), ref = 'No'),
+    ChronicKidneyDisease = relevel(as.factor(ChronicKidneyDisease), ref = 'No'),
+    ) %>% 
+  select(permth_int, MAINOUTCOME, Allcausemortality, Year2, SEQN, PFOA, PFOA_scaled, PFOS, PFOS_scaled, PFNA, PFNA_scaled, PFHxS, PFHxS_scaled, Age, Age_category, Age_binary, Gender, Ethnicity, EducationHighest, Income, Occupation2, Diet, Diabetes, BMI_class, Hypertension, ChronicKidneyDisease, Hyperlipidemia, Weight_pool, PseudoPSU, PseudoStratum, mortstat) %>% 
+  rename(`Povertytoincomeratio` = Income,
+         Year = Year2) 
+  #%>% 
+  #creating tertiles for sensitivity analysis (probably won't use)
+  # mutate(PFOA_tertile = cut(PFOA,(quantile(.$PFOA, c(0:3 / 3), na.rm = T)),
+  #                           include.lowest = T,
+  #                           labels = c('Low', 'Medium', "High")),
+  #        PFOS_tertile = cut(PFOS,(quantile(.$PFOS, c(0:3 / 3), na.rm = T)),
+  #                           include.lowest = T,
+  #                           labels = c('Low', 'Medium', "High")),
+  #        PFNA_tertile = cut(PFNA,(quantile(.$PFNA, c(0:3 / 3), na.rm = T)),
+  #                           include.lowest = T,
+  #                           labels = c('Low', 'Medium', "High")),
+  #        PFHxS_tertile = cut(PFHxS,(quantile(.$PFHxS, c(0:3 / 3), na.rm = T)),
+  #                            include.lowest = T,
+  #                            labels = c('Low', 'Medium', "High")))
+  
+#Dropping unused levels from factor variables
+FINAL_BASEDATASET <- droplevels(FINAL_BASEDATASET)
+
+
+```
+
+## Survey design
+
+```{r survey_design}
+#Creating survey design object
+
+
+#Exclusion criteria and variable transformation - SUBSETTING DATASET
+FINAL_BASEDATASET_regression <- FINAL_BASEDATASET %>% #n=17,851
+  #exclusion criteria
+  filter(Age >= 18,               #filtering out all observations under 18y/o (n = 14,965),        
+         !is.na(PFOA),            #filtering out all observations with missing exposure data (individuals missing one measurement are missing them all, n = 13,828) 
+         !is.na(mortstat))     #filtering out all observations with missing mortality data (n = 13,798)
+
+
+#Survey design object WITH ENTIRE ANALYTIC DATASET
+FINAL_BASEDATASET <- 
+  FINAL_BASEDATASET %>% 
+  mutate(miss = 1)
+
+#adding 0 for folk who do not meet exclusion criteria
+FINAL_BASEDATASET$miss[FINAL_BASEDATASET$SEQN %in% FINAL_BASEDATASET_regression$SEQN] <- 0
+
+#defining complex survey object
+nhanes_design0 <- svydesign(
+  id = ~ PseudoPSU,
+  strata = ~ PseudoStratum,
+  weights = ~ Weight_pool,
+  data = FINAL_BASEDATASET,
+  nest = T
+)
+
+#removing individuals who are missing
+nhanes_design <- subset(nhanes_design0, miss == 0)
+
+```
+
+```{r tables, echo = F}
+#EXPOSURE TABLE (from Functions.R)
+#Extracts and formats exposure data for each analyte
+
+bind_rows(
+  exposure_extraction_fun(FINAL_BASEDATASET_regression$PFOA, "PFOA"),
+
+  exposure_extraction_fun(FINAL_BASEDATASET_regression$PFOS, "PFOS"),
+
+  exposure_extraction_fun(FINAL_BASEDATASET_regression$PFNA, "PFNA"),
+
+  exposure_extraction_fun(FINAL_BASEDATASET_regression$PFHxS, "PFHxS")
+) %>%
+  remove_rownames() %>%
+  flextable::flextable() %>%
+  flextable::width(j = c(1,2), width = 2) %>%
+  flextable::add_header_row(values = 'Basic exposure table', colwidths = 4)
+
+#############################################################
+
+#Table 1, stratified by outcome (and including exposure information)
+#First specifying variables of interest
+varsofinterest <- c('PFOA', 'PFOS', 'PFNA', 'PFHxS', 'Year', "Age", "Gender", "Ethnicity", "EducationHighest", "Povertytoincomeratio", 'Occupation2', 'Diet', 'Diabetes', 'BMI_class', 'Hypertension', 'ChronicKidneyDisease', 'Hyperlipidemia')
+
+#UNWEIGHTED (these are counts)
+write.csv(print(
+  CreateTableOne(
+    vars = varsofinterest,
+    strata = 'MAINOUTCOME',
+    data = FINAL_BASEDATASET_regression,
+    test = F,
+    addOverall = T,
+    includeNA = T
+  ),
+  showAllLevels = F,
+  print = F,
+  format = "f",
+  nonnormal = c('PFOA', "PFOS", 'PFNA', 'PFHxS')
+),
+'outputs/Table/Outcomestable_COUNTS.csv')
+
+#WEIGHTED (these are %)
+write.csv(
+  print(
+    svyCreateTableOne(
+      vars = varsofinterest,
+      strata = 'MAINOUTCOME',
+      data = nhanes_design,
+      test = F,
+      includeNA = T,
+      addOverall = T
+    ),
+    print = F,
+    format = 'p',
+    nonnormal = c('PFOA', "PFOS", 'PFNA', 'PFHxS')
+  ),
+  'outputs/Table/Outcomestable_PROP.csv'
+)
+
+#checks
+# table1_svy <- svyTable1::svytable1(
+#   design = nhanes_design, strata_var = "MAINOUTCOME", 
+#   table_vars = varsofinterest, mode = "mixed",
+#   reliability_checks = TRUE,
+#   return_metrics = TRUE
+# )
+```
+
+## Bivariable analysis
+
+```{r bivariable_analysis, results='hide'}
+######################################################
+#TABLE 1: Scaled exposures, main outcome
+
+tbl_stack(
+  tbls = list(
+    #Exposures
+    univariate('PFOA_scaled', "MAINOUTCOME"),
+    univariate('PFOS_scaled', "MAINOUTCOME"),
+    univariate('PFNA_scaled', "MAINOUTCOME"),
+    univariate('PFHxS_scaled', "MAINOUTCOME"),
+    
+    #Covariates
+    univariate('Year', "MAINOUTCOME"),
+    univariate('Age', "MAINOUTCOME"),
+    univariate('Gender', "MAINOUTCOME"),
+    univariate('Ethnicity', "MAINOUTCOME"),
+    univariate('EducationHighest', "MAINOUTCOME"),
+    univariate('Povertytoincomeratio', "MAINOUTCOME"),
+    univariate('Occupation2', "MAINOUTCOME"),
+    univariate('Diet', "MAINOUTCOME"),
+    univariate('Diabetes', "MAINOUTCOME"),
+    univariate('BMI_class', "MAINOUTCOME"),
+    univariate('Hypertension', "MAINOUTCOME"),
+    univariate('ChronicKidneyDisease', "MAINOUTCOME"),
+    univariate('Hyperlipidemia', 'MAINOUTCOME')
+  )
+) %>% 
+  modify_column_hide(columns = p.value) %>% 
+  as_gt() %>%
+  tab_footnote(
+    "NOTE: exposures are log-transformed and z-score standardised"
+  ) %>% 
+  tab_footnote(
+    "Estimates are survey-feature modified"
+  ) %>% 
+  tab_header(
+    "Unadjusted bivariate estimates from survey-featured Cox regression of each covariate on non-communicable disease mortality: NHANES cycles 2003/04 to 2017/18"
+  ) %>% 
+  gtsave('outputs/Table/REGRESSIONTABLES/Scaled/univariate_NCD.docx')
+
+######################################################
+#TABLE 2: Scaled exposures, secondary outcome
+
+tbl_stack(
+  tbls = list(
+    #Exposures
+    univariate('PFOA_scaled', "Allcausemortality"),
+    univariate('PFOS_scaled', "Allcausemortality"),
+    univariate('PFNA_scaled', "Allcausemortality"),
+    univariate('PFHxS_scaled', "Allcausemortality"),
+    
+    #Covariates
+    univariate('Year', "Allcausemortality"),
+    univariate('Age', "Allcausemortality"),
+    univariate('Gender', "Allcausemortality"),
+    univariate('Ethnicity', "Allcausemortality"),
+    univariate('EducationHighest', "Allcausemortality"),
+    univariate('Povertytoincomeratio', "Allcausemortality"),
+    univariate('Occupation2', "Allcausemortality"),
+    univariate('Diet', "Allcausemortality"),
+    univariate('Diabetes', "Allcausemortality"),
+    univariate('BMI_class', "Allcausemortality"),
+    univariate('Hypertension', "Allcausemortality"),
+    univariate('ChronicKidneyDisease', "Allcausemortality"),
+    univariate('Hyperlipidemia', 'Allcausemortality')
+  )
+) %>% 
+  modify_column_hide(columns = p.value) %>% 
+  as_gt() %>%
+  tab_footnote(
+    "NOTE: exposures are log-transformed and z-score standardised"
+  ) %>% 
+  tab_footnote(
+    "Estimates are survey-feature modified"
+  ) %>% 
+  tab_header(
+    "Unadjusted bivariate estimates from survey-featured Cox regression of each covariate on all-cause mortality: NHANES cycles 2003/04 to 2017/18"
+  ) %>% 
+  gtsave('outputs/Table/REGRESSIONTABLES/Scaled/univariate_ACM.docx')
+
+```
+
+## Multivariable analysis (including interaction terms) - COMPLETE CASE
+
+```{r multivariable COMPLETE CASE, results = 'hide'}
+#Model 1: scaled exposures, main outcome
+
+tbl_stack(tbls = list(
+  multivariate('PFOA_scaled', "MAINOUTCOME", nhanes_design),
+  multivariate('PFOS_scaled', "MAINOUTCOME", nhanes_design),
+  multivariate('PFNA_scaled', "MAINOUTCOME", nhanes_design),
+  multivariate('PFHxS_scaled', "MAINOUTCOME", nhanes_design)
+)) %>% 
+  as_gt() %>%
+  tab_footnote(
+    "Adjusted for: survey cycle, age (with restricted cubic spline), ethnicity, gender, education, diabetes, diet, employment status, poverty to income ratio, BMI, hypertension, chronic kidney disease and hyperlipidemia"
+  ) %>% 
+  tab_header(
+    "Adjusted estimates from survey-featured Cox regression of PFAS exposure on non-communicable disease mortality: NHANES cycles 2003/04 to 2017/18"
+  ) %>% 
+  gtsave('outputs/Table/REGRESSIONTABLES/Scaled/adjusted_NCD.docx')
+
+ ######################################################
+ #Model 2: Scaled exposures, secondary outcome
+
+tbl_stack(tbls = list(
+  multivariate('PFOA_scaled', "Allcausemortality", nhanes_design),
+  multivariate('PFOS_scaled', "Allcausemortality", nhanes_design),
+  multivariate('PFNA_scaled', "Allcausemortality", nhanes_design),
+  multivariate('PFHxS_scaled', "Allcausemortality", nhanes_design)
+))%>% 
+  as_gt() %>%
+  tab_footnote(
+    "Adjusted for: survey cycle, age (with restricted cubic spline), ethnicity, gender, education, diabetes, diet, employment status, poverty to income ratio, BMI, hypertension, chronic kidney disease and hyperlipidemia"
+  ) %>% 
+  tab_header(
+    "Adjusted estimates from survey-featured Cox regression of PFAS exposure on all-cause mortality: NHANES cycles 2003/04 to 2017/18"
+  ) %>% 
+  gtsave('outputs/Table/REGRESSIONTABLES/Scaled/adjusted_ACM.docx')
+
+ #########################################################
+ #Model 3 Scaled exposures with interactions, primary outcome
+
+ tbl_stack(
+  tbls = list(
+    multivariate_interaction('PFOA_scaled', "MAINOUTCOME", nhanes_design, "PFOS_scaled", "PFNA_scaled", "PFHxS_scaled"),
+    
+    multivariate_interaction('PFOS_scaled', "MAINOUTCOME", nhanes_design, "PFOA_scaled", "PFNA_scaled", "PFHxS_scaled"),
+    
+    multivariate_interaction('PFNA_scaled', "MAINOUTCOME", nhanes_design, "PFOA_scaled", "PFOS_scaled", "PFHxS_scaled"),
+    
+    multivariate_interaction('PFHxS_scaled', "MAINOUTCOME", nhanes_design, "PFOA_scaled", "PFOS_scaled", "PFNA_scaled")
+  )
+) %>% 
+  as_gt() %>%
+  tab_footnote(
+    "Adjusted for: survey cycle, age (with restricted cubic spline), ethnicity, gender, education, diabetes, diet, employment status, poverty to income ratio, smoking status, BMI, hypertension and heart disease"
+  ) %>% 
+  tab_footnote(
+    "Includes PFAS*PFAS interaction terms"
+    ) %>% 
+  tab_header(
+    "Adjusted estimates from survey-featured Cox regression of PFAS exposure on non-communicable disease mortality: NHANES cycles 2003/04 to 2017/18"
+  ) %>% 
+  gtsave('outputs/Table/REGRESSIONTABLES/Scaled/adjusted_interaction_NCD.docx')
+
+ ######################################################
+ #Model 4: Scaled exposures with outcome, secondary outcome
+
+ tbl_stack(
+  tbls = list(
+    multivariate_interaction('PFOA_scaled', "Allcausemortality", nhanes_design, "PFOS_scaled", "PFNA_scaled", "PFHxS_scaled"),
+    
+    multivariate_interaction('PFOS_scaled', "Allcausemortality", nhanes_design, "PFOA_scaled", "PFNA_scaled", "PFHxS_scaled"),
+    
+    multivariate_interaction('PFNA_scaled', "Allcausemortality", nhanes_design, "PFOA_scaled", "PFOS_scaled", "PFHxS_scaled"),
+    
+    multivariate_interaction('PFHxS_scaled', "Allcausemortality", nhanes_design, "PFOA_scaled", "PFOS_scaled", "PFNA_scaled")
+  )
+) %>% 
+  as_gt() %>%
+  tab_footnote(
+    "Adjusted for: survey cycle, age (with restricted cubic spline), ethnicity, gender, education, diabetes, diet, employment status and poverty to income ratio"
+  ) %>% 
+  tab_footnote(
+    "Includes PFAS*PFAS interaction terms"
+  ) %>% 
+  tab_header(
+    "Adjusted estimates from survey-featured Cox regression of PFAS exposure on all-cause mortality: NHANES cycles 2003/04 to 2017/18"
+  ) %>% 
+  gtsave('outputs/Table/REGRESSIONTABLES/Scaled/adjusted_interaction_ACM.docx')
+
+```
+
+## Setup of multiple imputation by chained equations (MICE) procedure
+
+```{r MICE_setup, results = 'hide'}
+#missingness
+unlist(lapply(FINAL_BASEDATASET_regression, function(x) sum(is.na(x))))/nrow(FINAL_BASEDATASET_regression) 
+  
+#assessing aatterns of missingness
+md.pattern(FINAL_BASEDATASET_regression)
+
+#Barplot (missingness is negligible, save for PIR and Diet)
+FINAL_BASEDATASET_regression %>% 
+  select(-PFHxS_scaled, -PFOA_scaled, -PFNA_scaled, -PFOS_scaled, -Age_category, -Age_binary, -permth_int, -mortstat, -SEQN, -Hypertension, -PseudoStratum, -PseudoPSU, -Weight_pool) %>%
+  rename(`All cause mortality` = Allcausemortality,
+         `Main outcome` = MAINOUTCOME,
+         `Occupation status` = Occupation2,
+         BMI = BMI_class,
+         `Poverty to income ratio` = Povertytoincomeratio,
+         `Chronic kidney disease` = ChronicKidneyDisease) %>% 
+  DataExplorer::plot_missing()
+
+#Marginplots with select covariates - these are looking similar, suggesting no difference
+VIM::marginplot(FINAL_BASEDATASET_regression[,c('Povertytoincomeratio', "Age")])
+VIM::marginplot(FINAL_BASEDATASET_regression[,c('Povertytoincomeratio', "EducationHighest")])
+VIM::marginplot(FINAL_BASEDATASET_regression[,c('Povertytoincomeratio', "Diet")])
+
+#Conclude that data is MAR - proceed with MICE
+###########################################
+#imputation
+
+#Variable transformation, excluding SEQN from analysis and also calculating follow-up time using Nelson-Aalen
+FINAL_BASEDATASET_regression_MICE <- FINAL_BASEDATASET_regression %>%
+         mutate(EducationHighest = as.factor(EducationHighest),
+                Occupation2 = as.factor(Occupation2),
+                BMI_class = as.factor(BMI_class),
+                cumhaz = nelsonaalen(., permth_int, MAINOUTCOME)) %>% 
+  select(-mortstat, -SEQN, -permth_int)
+
+#Checking distribution of Nelson-Aalen cumulative hazard
+hist(FINAL_BASEDATASET_regression_MICE$cumhaz)
+
+#Reproducibility
+set.seed(11)
+
+#Running imputation, creating 22 datasets (based on overall missingness %) and iterating 5 times
+imputation <- mice(FINAL_BASEDATASET_regression_MICE, m = 22, maxit = 5)
+
+#verifying that convergence was achieved -- this is very important!
+#No visible pattern
+plot(imputation)
+#PIR is the only numeric variable
+#bwplot(imputation, Povertytoincomeratio ~ .imp)
+
+#looking at effect estimates from EACH IMPUTED DATASET - in this case for just PFOA exposure (with user-defined function)
+#multivariate_MICE('PFOA', 'MAINOUTCOME')
+
+#Long form dataset
+impdata <- complete(imputation, action = "long")
+
+#Include original follow up time in the complete long form imputed dataset
+impdata$permth_int <- rep(FINAL_BASEDATASET_regression$permth_int, imputation$m)
+impdata$eligible <- 1
+
+#Confirming missingness is GONE from first few imputed datasets
+DataExplorer::plot_missing(subset(impdata, subset = .imp == 1))
+# DataExplorer::plot_missing(subset(impdata, subset = .imp == 2))
+# DataExplorer::plot_missing(subset(impdata, subset = .imp == 6))
+# DataExplorer::plot_missing(subset(impdata, subset = .imp == 11))
+
+###########################################################################
+#CREATING SURVEY DESIGN OBJECT
+
+#First grabbing all the people who are ineligible
+dat_ineligible <- FINAL_BASEDATASET %>%
+  filter(miss == 1) %>%
+  select(Weight_pool, PseudoPSU, PseudoStratum, SEQN)
+
+#Replicating the ineligible dataset 22 times (corresponding to m in mice call above)
+ineligible_list <- lapply(1:22, function(i) {
+  df <- dat_ineligible
+  df$.imp <- i
+  return(df)
+})
+ineligible_stacked <- do.call(rbind, ineligible_list)
+str(ineligible_list)
+
+#Finding which columns exist in imputed data but not in ineligible data
+cols_to_add <- setdiff(names(impdata), names(ineligible_stacked))
+
+#Add these missing columns to the ineligible data, filling with NA.
+ineligible_stacked[, cols_to_add] <- NA
+
+#Set eligiblity criteria for this group to nil
+ineligible_stacked$eligible <- 0
+
+#Coercing the ineligible data to have the exact same column names and order as the imputed data
+ineligible_final <- ineligible_stacked[, names(impdata)]
+
+#Combine
+impdata_FULL <- rbind(impdata, ineligible_final)
+
+########################################
+#Create survey design object
+design_full <- svydesign(
+  id = ~ PseudoPSU,
+  strata = ~ PseudoStratum,
+  weights = ~ Weight_pool,
+  data = mitools::imputationList(split(impdata_FULL, impdata_FULL$.imp)),
+  nest = T
+)
+
+#Subsetting by eligible people
+design_analytic <- subset(design_full, eligible == 1)
+```
+
+## MICE execution
+
+```{r MICE_analysis, results = 'hide'}
+##################################################################
+#Model 1: scaled exposures, main outcome
+
+bind_rows(
+  pool_and_format_results(multivariate_MICE('PFOA_scaled', "MAINOUTCOME")),
+
+  pool_and_format_results(multivariate_MICE('PFOS_scaled', "MAINOUTCOME")),
+
+  pool_and_format_results(multivariate_MICE('PFNA_scaled', "MAINOUTCOME")),
+
+  pool_and_format_results(multivariate_MICE('PFHxS_scaled', "MAINOUTCOME"))
+  ) %>%
+  gt() %>%
+  tab_footnote(
+    "Adjusted for: survey cycle, age (with restricted cubic spline), ethnicity, gender, education, diabetes, diet, employment status, poverty to income ratio, BMI, hypertension, chronic kidney disease and hyperlipidemia"
+  ) %>%
+  tab_header(
+    "Adjusted estimates from survey-featured Cox regression of PFAS exposure on non-communicable disease mortality: NHANES cycles 2003/04 to 2017/18"
+  ) %>%
+  gtsave('outputs/Table/REGRESSIONTABLES/Scaled/adjusted_NCD_MICE.docx')
+
+##################################################################
+#Model 2: scaled exposures, secondary outcome
+
+bind_rows(
+  pool_and_format_results(multivariate_MICE('PFOA_scaled', "Allcausemortality")),
+
+  pool_and_format_results(multivariate_MICE('PFOS_scaled', "Allcausemortality")),
+
+  pool_and_format_results(multivariate_MICE('PFNA_scaled', "Allcausemortality")),
+
+  pool_and_format_results(multivariate_MICE('PFHxS_scaled', "Allcausemortality"))
+) %>%
+  gt() %>%
+  tab_footnote(
+    "Adjusted for: survey cycle, age (with restricted cubic spline), ethnicity, gender, education, diabetes, diet, employment status, poverty to income ratio, BMI, hypertension, chronic kidney disease and hyperlipidemia"
+  ) %>%
+  tab_header(
+    "Adjusted estimates from survey-featured Cox regression of PFAS exposure on all-cause mortality: NHANES cycles 2003/04 to 2017/18"
+  ) %>%
+  gtsave('outputs/Table/REGRESSIONTABLES/Scaled/adjusted_ACM_MICE.docx')
+
+###################################################################
+#Model 3: scaled exposures with interactions, primary outcome
+bind_rows(
+  pool_and_format_results(multivariate_MICE_interaction('PFOA_scaled', "MAINOUTCOME", "PFOS_scaled", "PFNA_scaled", "PFHxS_scaled")),
+
+  pool_and_format_results(multivariate_MICE_interaction('PFOS_scaled', "MAINOUTCOME", "PFOA_scaled", "PFNA_scaled", "PFHxS_scaled")),
+
+  pool_and_format_results(multivariate_MICE_interaction('PFNA_scaled', "MAINOUTCOME", "PFOA_scaled", "PFOS_scaled", "PFHxS_scaled")),
+
+  pool_and_format_results(multivariate_MICE_interaction('PFHxS_scaled', "MAINOUTCOME", "PFOA_scaled", "PFOS_scaled", "PFNA_scaled"))
+) %>%
+  gt() %>%
+  tab_footnote(
+    "Adjusted for: survey cycle, age (with restricted cubic spline), ethnicity, gender, education, diabetes, diet, employment status, poverty to income ratio, BMI, hypertension, chronic kidney disease and hyperlipidemia"
+  ) %>%
+  tab_footnote(
+    "Includes PFAS*PFAS interaction terms"
+  ) %>%
+  tab_header(
+    "Adjusted estimates from survey-featured Cox regression of PFAS exposure on non-communicable disease mortality: NHANES cycles 2003/04 to 2017/18"
+  ) %>%
+  gtsave('outputs/Table/REGRESSIONTABLES/Scaled/adjusted_interaction_NCD_MICE.docx')
+
+######################################################
+#TABLE 4: Scaled exposures with interactions, secondary outcome
+
+bind_rows(
+  pool_and_format_results(multivariate_MICE_interaction('PFOA_scaled', "Allcausemortality", "PFOS_scaled", "PFNA_scaled", "PFHxS_scaled")),
+
+  pool_and_format_results(multivariate_MICE_interaction('PFOS_scaled', "Allcausemortality", "PFOA_scaled", "PFNA_scaled", "PFHxS_scaled")),
+
+  pool_and_format_results(multivariate_MICE_interaction('PFNA_scaled', "Allcausemortality", "PFOA_scaled", "PFOS_scaled", "PFHxS_scaled")),
+
+  pool_and_format_results(multivariate_MICE_interaction('PFHxS_scaled', "Allcausemortality", "PFOA_scaled", "PFOS_scaled", "PFNA_scaled"))
+) %>%
+  gt() %>%
+  tab_footnote(
+    "Adjusted for: survey cycle, age (with restricted cubic spline), ethnicity, gender, education, diabetes, diet, employment status, poverty to income ratio, BMI, hypertension, chronic kidney disease and hyperlipidemia"
+  ) %>%
+  tab_footnote(
+    "Includes PFAS*PFAS interaction terms"
+  ) %>%
+  tab_header(
+    "Adjusted estimates from survey-featured Cox regression of PFAS exposure on all-cause mortality: NHANES cycles 2003/04 to 2017/18"
+  ) %>%
+  gtsave('outputs/Table/REGRESSIONTABLES/Scaled/adjusted_interaction_ACM_MICE.docx')
+```
+
+## Subgroup analysis - age category
+
+```{r subgroup_analysis}
+#This rather clunky code performs a number of tasks: it fits effect modification models for each of the four exposures by categorical age, for complete case as well as MICE data, extracts the exponentiated coefficients and confidence intervals, then binds them into a single dataframe. Given how many user-defined functions I have already created for this analysis, it didn't feel prudent to add more.
+
+#Subgroup analysis
+
+#Manually creating models for MICE (which are later extracted)
+PFOA_subgroup <- mitools::MIcombine(with(
+  design_analytic,
+  svycoxph(
+    Surv(permth_int, MAINOUTCOME) ~ PFOA_scaled + Year + Age_category * PFOA_scaled + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet + Diabetes + BMI_class + Hypertension + ChronicKidneyDisease + Hyperlipidemia
+  )
+))
+
+PFOS_subgroup <- mitools::MIcombine(with(
+  design_analytic,
+  svycoxph(
+    Surv(permth_int, MAINOUTCOME) ~ PFOS_scaled + Year + Age_category * PFOS_scaled + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet + Diabetes + BMI_class + Hypertension + ChronicKidneyDisease + Hyperlipidemia
+  )
+))
+
+PFNA_subgroup <- mitools::MIcombine(with(
+  design_analytic,
+  svycoxph(
+    Surv(permth_int, MAINOUTCOME) ~ PFNA_scaled + Year + Age_category * PFNA_scaled + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet + Diabetes + BMI_class + Hypertension + ChronicKidneyDisease + Hyperlipidemia
+  )
+))
+
+PFHxS_subgroup <- mitools::MIcombine(with(
+  design_analytic,
+  svycoxph(
+    Surv(permth_int, MAINOUTCOME) ~ PFHxS_scaled + Year + Age_category * PFHxS_scaled + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet + Diabetes + BMI_class + Hypertension + ChronicKidneyDisease + Hyperlipidemia
+  )
+))
+
+
+################################################
+
+
+subgroup_analysis <- bind_rows(
+  
+  #Complete case analysis
+  bind_rows(
+    
+    #PFOA
+    bind_cols((exp(coef(
+      svycoxph(
+        Surv(permth_int, MAINOUTCOME) ~ PFOA_scaled + SEQN + Year + PFOA_scaled *
+          Age_category + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet + Diabetes + BMI_class + Hypertension + ChronicKidneyDisease + Hyperlipidemia,
+        design = nhanes_design
+      )
+    )) %>%
+      data.frame() %>%
+      rownames_to_column(var = "var")), exp(confint(
+        svycoxph(
+          Surv(permth_int, MAINOUTCOME) ~ PFOA_scaled + SEQN + Year + PFOA_scaled *
+            Age_category + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet + Diabetes + BMI_class + Hypertension + ChronicKidneyDisease + Hyperlipidemia,
+          design = nhanes_design
+        )
+      )))%>% 
+      slice(27:29),
+    
+    #PFOS
+    bind_cols((exp(coef(
+      svycoxph(
+        Surv(permth_int, MAINOUTCOME) ~ PFOS_scaled + SEQN + Year + PFOS_scaled *
+          Age_category + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet + Diabetes + BMI_class + Hypertension + ChronicKidneyDisease + Hyperlipidemia,
+        design = nhanes_design
+      )
+    )) %>%
+      data.frame() %>%
+      rownames_to_column(var = "var")), exp(confint(
+        svycoxph(
+          Surv(permth_int, MAINOUTCOME) ~ PFOS_scaled + SEQN + Year + PFOS_scaled *
+            Age_category + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet + Diabetes + BMI_class + Hypertension + ChronicKidneyDisease + Hyperlipidemia,
+          design = nhanes_design
+        )
+      )))%>% 
+      slice(27:29),
+    
+    #PFNA
+    bind_cols((exp(coef(
+      svycoxph(
+        Surv(permth_int, MAINOUTCOME) ~ PFNA_scaled + SEQN + Year + PFNA_scaled *
+          Age_category + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet + Diabetes + BMI_class + Hypertension + ChronicKidneyDisease + Hyperlipidemia,
+        design = nhanes_design
+      )
+    )) %>%
+      data.frame() %>%
+      rownames_to_column(var = "var")), exp(confint(
+        svycoxph(
+          Surv(permth_int, MAINOUTCOME) ~ PFNA_scaled + SEQN + Year + PFNA_scaled *
+            Age_category + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet + Diabetes + BMI_class + Hypertension + ChronicKidneyDisease + Hyperlipidemia,
+          design = nhanes_design
+        )
+      )))%>% 
+      slice(27:29),
+    
+    #PFHxS
+    bind_cols((exp(coef(
+      svycoxph(
+        Surv(permth_int, MAINOUTCOME) ~ PFHxS_scaled + SEQN + Year + PFHxS_scaled *
+          Age_category + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet + Diabetes + BMI_class + Hypertension + ChronicKidneyDisease + Hyperlipidemia,
+        design = nhanes_design
+      )
+    )) %>%
+      data.frame() %>%
+      rownames_to_column(var = "var")), exp(confint(
+        svycoxph(
+          Surv(permth_int, MAINOUTCOME) ~ PFHxS_scaled + SEQN + Year + PFHxS_scaled *
+            Age_category + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet + Diabetes + BMI_class + Hypertension + ChronicKidneyDisease + Hyperlipidemia,
+          design = nhanes_design
+        )
+      )))%>% 
+      slice(27:29)
+  ) %>% 
+    separate(var, into = c('PFAS', 'Characteristic'), sep = ":") %>% 
+    mutate(PFAS = str_sub(PFAS, 1, -8),
+           cat = 'Complete case') %>% 
+    rename(HR = ".",
+           lower = `2.5 %`,
+           upper = `97.5 %`),
+  
+  #########################
+  #MICE
+    bind_rows(
+    #PFOS
+    bind_cols(exp(coef(PFOS_subgroup)) %>%
+                data.frame(), 
+              exp(confint(PFOS_subgroup)) %>%
+                data.frame()) %>% 
+      slice(26:28),
+    
+    #PFOA
+    bind_cols(exp(coef(PFOA_subgroup)) %>%
+                data.frame(), 
+              exp(confint(PFOA_subgroup)) %>%
+                data.frame()) %>% 
+      slice(26:28),
+    
+    #PFNA
+    bind_cols(exp(coef(PFNA_subgroup)) %>%
+                data.frame(), 
+              exp(confint(PFNA_subgroup)) %>%
+                data.frame()) %>% 
+      slice(26:28),
+    
+    #PFHxS
+    bind_cols(exp(coef(PFHxS_subgroup)) %>%
+                data.frame(), 
+              exp(confint(PFHxS_subgroup)) %>%
+                data.frame()) %>% 
+      slice(26:28)
+    
+  ) %>% 
+    rownames_to_column(var = 'var') %>% 
+    separate(var, into = c('PFAS', 'Characteristic'), sep = ":") %>% 
+    mutate(PFAS = str_sub(PFAS, 1, -8),
+           cat = 'MICE') %>% 
+    rename(HR = ".",
+           lower = `X2.5..`,
+           upper = `X97.5..`)
+)
+
+write_csv(subgroup_analysis, 'outputs/Table/REGRESSIONTABLES/Scaled/subgroup_analysis.csv')
+```
+
+## Model diagnostics
+
+```{r diagnostics, results='hide'}
+#DIAGNOSTICS
+#NOTE TO TAs: As you will have seen from our presentation, we have a *lot* of models in this analysis. I have run diagnostics across the piece and there were no violations of our model detected - this goes for all analytes for both outcomes and adjusted + interaction models. It seemed highly repetitive to do this so for the sake of concision I have omitted here. But I have not detected any issues with our model specification.
+
+#PROPORTIONAL HAZARDS
+#For PFOA on NCD, adjusted, complete case,
+
+#Survey-design
+PFOA_diag <- svycoxph(Surv(permth_int, MAINOUTCOME) ~ PFOA_scaled  + Year + rms::rcs(Age,4) + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet +  Diabetes + BMI_class + Hypertension + ChronicKidneyDisease + Hyperlipidemia, design = nhanes_design)
+#Normal Cox PH model
+PFOA_diag_normal <- coxph(Surv(permth_int, MAINOUTCOME) ~ PFOA_scaled  + Year + rms::rcs(Age,4) + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet +  Diabetes + BMI_class + Hypertension + ChronicKidneyDisease + Hyperlipidemia, data = FINAL_BASEDATASET_regression)
+
+#No PH violation
+cox.zph(PFOA_diag)
+cox.zph(PFOA_diag_normal)
+
+####################
+
+#INTERACTION MODELS
+PFOA_diag_interaction <- svycoxph(Surv(permth_int, MAINOUTCOME) ~ PFOA_scaled  + Year + rms::rcs(Age,4) + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet +  Diabetes + BMI_class + Hypertension + ChronicKidneyDisease + Hyperlipidemia +PFOA_scaled*PFOS_scaled +PFOA_scaled*PFNA_scaled + PFOA_scaled*PFHxS_scaled, design = nhanes_design)
+#This is for the model with interaction terms
+PFOA_diag_normal_interaction <- coxph(Surv(permth_int, MAINOUTCOME) ~ PFOA_scaled  + Year + rms::rcs(Age,4) + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet + Diabetes + BMI_class + Hypertension + ChronicKidneyDisease + Hyperlipidemia +PFOA_scaled*PFOS_scaled +PFOA_scaled*PFNA_scaled + PFOA_scaled*PFHxS_scaled, data = FINAL_BASEDATASET_regression)
+#Agagin, global p-value suggests no violation of PHA
+cox.zph(PFOA_diag_normal_interaction)
+cox.zph(PFOA_diag_interaction)
+
+###########################################
+#AND HOW ABOUT COLLINEARITY
+#Low collinearity was observed across all model specifications, but again I didn't think it prudent to add every single diagnostic we ran.
+
+PFOA_collinearity <- (lm(MAINOUTCOME ~ PFOA_scaled  + Year + rms::rcs(Age,4) + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet + Diabetes + BMI_class + Hypertension + ChronicKidneyDisease + Hyperlipidemia, data = nhanes_design))
+#negligible collinearity in the main model
+car::vif(PFOA_collinearity)
+
+#Interaction model
+PFOA_collinearity_interaction <- (lm(MAINOUTCOME ~ PFOA_scaled  + Year + rms::rcs(Age,4) + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet + Diabetes + BMI_class + ChronicKidneyDisease + Hyperlipidemia + PFOA_scaled*PFOS_scaled +PFOA_scaled*PFNA_scaled + PFOA_scaled*PFHxS_scaled, data = nhanes_design))
+#When fit on a model with the interaction terms added, the collinearity is comparatively elevated. However the GVIF is between 1.7 and 2.3 for these terms, again indicating negligible collinearity. Therefore terms are retained
+car::vif(PFOA_collinearity_interaction, type = c('predictor'))
+
+##########################
+#Looking at RSE using svyTable1
+#For all variables that use means (age, PIR) the RSE is low
+svyTable1::svydiag(
+  svycoxph(
+    Surv(permth_int, MAINOUTCOME) ~ PFOA_scaled + SEQN + Year + Age + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet + Diabetes + BMI_class + Hypertension + ChronicKidneyDisease + Hyperlipidemia,
+    design = nhanes_design
+  )
+) 
+
+#Now checking additive interaction
+#NOTE: only a model with terms fitted as tertiles works with the svyTable1 package (because they are categorical)
+# additive_int <- svycoxph(Surv(permth_int, MAINOUTCOME) ~ PFOA_tertile  + Year + rms::rcs(Age,4) + Gender + Ethnicity + EducationHighest + Povertytoincomeratio + Occupation2 + Diet +  Diabetes + BMI_class + Hypertension + ChronicKidneyDisease + Hyperlipidemia +PFOA_tertile*PFOS_tertile +PFOA_tertile*PFNA_tertile + PFOA_tertile*PFHxS_tertile, design = nhanes_design)
+# 
+# summary(additive_int)
+# 
+# #Measures RERI, attributable proportion
+# svyTable1::addintlist(
+#   model = additive_int,
+#   factor1_name = "PFOA_tertile",
+#   factor2_name = 'PFHxS_tertile',
+#   measures = c('RERI', 'AP'),
+#   digits = 3
+# )
+
+```
+
+## Forest plots 
+
+```{r forestplot, results = 'hide'}
+
+#This mammoth chunk of code extracts and formats the hazard ratios/CIs for each of our models under each of our model sets. 40 models in all (i.e. everything but the subgroup analysis). I'm aware that there is certainly a tidier way to do this, but I am under the kosh right now - apologies.
+
+#Extracting data from scaled exposure
+scaled_PLOT <- bind_rows(
+  #FIRST - MAIN OUTCOME
+
+  #univariate models
+  extraction_function_models(univariate('PFOA_scaled', "MAINOUTCOME"), 'Univariate', 'NCD mortality'),
+  extraction_function_models(univariate('PFOS_scaled', "MAINOUTCOME"), 'Univariate', 'NCD mortality'),
+  extraction_function_models(univariate('PFNA_scaled', "MAINOUTCOME"), 'Univariate', 'NCD mortality'),
+  extraction_function_models(univariate('PFHxS_scaled', "MAINOUTCOME"), 'Univariate', 'NCD mortality'),
+
+  #multivariable adjusted
+  extraction_function_models(multivariate('PFOA_scaled', "MAINOUTCOME", nhanes_design), 'Multivariate adjusted complete case', 'NCD mortality'),
+  extraction_function_models(multivariate('PFOS_scaled', "MAINOUTCOME", nhanes_design), 'Multivariate adjusted complete case', 'NCD mortality'),
+  extraction_function_models(multivariate('PFNA_scaled', "MAINOUTCOME", nhanes_design), 'Multivariate adjusted complete case', 'NCD mortality'),
+  extraction_function_models(multivariate('PFHxS_scaled', "MAINOUTCOME", nhanes_design), 'Multivariate adjusted complete case', 'NCD mortality'),
+
+  #multivariable interaction
+  extraction_function_models(multivariate_interaction('PFOA_scaled', "MAINOUTCOME", nhanes_design, "PFOS_scaled", "PFNA_scaled", "PFHxS_scaled"), 'Multivariate interaction complete case', 'NCD mortality'),
+  extraction_function_models(multivariate_interaction('PFOS_scaled', "MAINOUTCOME", nhanes_design, "PFOA_scaled", "PFNA_scaled", "PFHxS_scaled"), 'Multivariate interaction complete case', 'NCD mortality'),
+  extraction_function_models(multivariate_interaction('PFNA_scaled', "MAINOUTCOME", nhanes_design, "PFOA_scaled", "PFOS_scaled", "PFHxS_scaled"), 'Multivariate interaction complete case', 'NCD mortality'),
+  extraction_function_models(multivariate_interaction('PFHxS_scaled', "MAINOUTCOME", nhanes_design, "PFOS_scaled", "PFNA_scaled", "PFNA_scaled"), 'Multivariate interaction complete case', 'NCD mortality'),
+
+  #multivariable adjusted MICE
+  extraction_function_models_MICE(pool_and_format_results(multivariate_MICE('PFOA_scaled', "MAINOUTCOME")), 'Multivariate adjusted MICE', 'NCD mortality'),
+  extraction_function_models_MICE(pool_and_format_results(multivariate_MICE('PFOS_scaled', "MAINOUTCOME")), 'Multivariate adjusted MICE', 'NCD mortality'),
+  extraction_function_models_MICE(pool_and_format_results(multivariate_MICE('PFNA_scaled', "MAINOUTCOME")), 'Multivariate adjusted MICE', 'NCD mortality'),
+  extraction_function_models_MICE(pool_and_format_results(multivariate_MICE('PFHxS_scaled', "MAINOUTCOME")), 'Multivariate adjusted MICE', 'NCD mortality'),
+
+  #multivariable interaction MICE
+
+  extraction_function_models_MICE(pool_and_format_results(multivariate_MICE_interaction('PFOA_scaled', "MAINOUTCOME", "PFOS_scaled", "PFNA_scaled", "PFHxS_scaled")), 'Multivariate interaction MICE', 'NCD mortality'),
+  extraction_function_models_MICE(pool_and_format_results(multivariate_MICE_interaction('PFOS_scaled', "MAINOUTCOME", "PFOA_scaled", "PFNA_scaled", "PFHxS_scaled")), 'Multivariate interaction MICE', 'NCD mortality'),
+  extraction_function_models_MICE(pool_and_format_results(multivariate_MICE_interaction('PFNA_scaled', "MAINOUTCOME", "PFOA_scaled", "PFOS_scaled", "PFHxS_scaled")), 'Multivariate interaction MICE', 'NCD mortality'),
+  extraction_function_models_MICE(pool_and_format_results(multivariate_MICE_interaction('PFHxS_scaled', "MAINOUTCOME", "PFOA_scaled", "PFOS_scaled", "PFNA_scaled")), 'Multivariate interaction MICE', 'NCD mortality'),
+
+  #############################################################################################
+  #NOW SECONDARY OUTCOME - ALL CAUSE MORTALITY
+  extraction_function_models(univariate('PFOA_scaled', "Allcausemortality"), 'Univariate', 'All cause mortality'),
+  extraction_function_models(univariate('PFOS_scaled', "Allcausemortality"), 'Univariate', 'All cause mortality'),
+  extraction_function_models(univariate('PFNA_scaled', "Allcausemortality"), 'Univariate', 'All cause mortality'),
+  extraction_function_models(univariate('PFHxS_scaled', "Allcausemortality"), 'Univariate', 'All cause mortality'),
+
+  #multivariable adjusted
+  extraction_function_models(multivariate('PFOA_scaled', "Allcausemortality", nhanes_design), 'Multivariate adjusted complete case', 'All cause mortality'),
+  extraction_function_models(multivariate('PFOS_scaled', "Allcausemortality", nhanes_design), 'Multivariate adjusted complete case', 'All cause mortality'),
+  extraction_function_models(multivariate('PFNA_scaled', "Allcausemortality", nhanes_design), 'Multivariate adjusted complete case', 'All cause mortality'),
+  extraction_function_models(multivariate('PFHxS_scaled', "Allcausemortality", nhanes_design), 'Multivariate adjusted complete case', 'All cause mortality'),
+
+  #multivariable interaction
+  extraction_function_models(multivariate_interaction('PFOA_scaled', "Allcausemortality", nhanes_design, "PFOS_scaled", "PFNA_scaled", "PFHxS_scaled"), 'Multivariate interaction complete case', 'All cause mortality'),
+  extraction_function_models(multivariate_interaction('PFOS_scaled', "Allcausemortality", nhanes_design, "PFOA_scaled", "PFNA_scaled", "PFHxS_scaled"), 'Multivariate interaction complete case', 'All cause mortality'),
+  extraction_function_models(multivariate_interaction('PFNA_scaled', "Allcausemortality", nhanes_design, "PFOA_scaled", "PFOS_scaled", "PFHxS_scaled"), 'Multivariate interaction complete case', 'All cause mortality'),
+  extraction_function_models(multivariate_interaction('PFHxS_scaled', "Allcausemortality", nhanes_design, "PFOS_scaled", "PFNA_scaled", "PFNA_scaled"), 'Multivariate interaction complete case', 'All cause mortality'),
+
+  #multivariable adjusted MICE
+  extraction_function_models_MICE(pool_and_format_results(multivariate_MICE('PFOA_scaled', "Allcausemortality")), 'Multivariate adjusted MICE', 'All cause mortality'),
+  extraction_function_models_MICE(pool_and_format_results(multivariate_MICE('PFOS_scaled', "Allcausemortality")), 'Multivariate adjusted MICE', 'All cause mortality'),
+  extraction_function_models_MICE(pool_and_format_results(multivariate_MICE('PFNA_scaled', "Allcausemortality")), 'Multivariate adjusted MICE', 'All cause mortality'),
+  extraction_function_models_MICE(pool_and_format_results(multivariate_MICE('PFHxS_scaled', "Allcausemortality")), 'Multivariate adjusted MICE', 'All cause mortality'),
+
+  #multivariable interaction MICE
+
+  extraction_function_models_MICE(pool_and_format_results(multivariate_MICE_interaction('PFOA_scaled', "Allcausemortality", "PFOS_scaled", "PFNA_scaled", "PFHxS_scaled")), 'Multivariate interaction MICE', 'All cause mortality'),
+  extraction_function_models_MICE(pool_and_format_results(multivariate_MICE_interaction('PFOS_scaled', "Allcausemortality", "PFOA_scaled", "PFNA_scaled", "PFHxS_scaled")), 'Multivariate interaction MICE', 'All cause mortality'),
+  extraction_function_models_MICE(pool_and_format_results(multivariate_MICE_interaction('PFNA_scaled', "Allcausemortality", "PFOA_scaled", "PFOS_scaled", "PFHxS_scaled")), 'Multivariate interaction MICE', 'All cause mortality'),
+  extraction_function_models_MICE(pool_and_format_results(multivariate_MICE_interaction('PFHxS_scaled', "Allcausemortality", "PFOA_scaled", "PFOS_scaled", "PFNA_scaled")), 'Multivariate interaction MICE', 'All cause mortality')
+
+) %>%
+  mutate(cat = as.factor(cat),
+         cat = fct_relevel(cat, c('Multivariate interaction MICE',
+                                  'Multivariate adjusted MICE',
+                                  'Multivariate interaction complete case',
+                                  'Multivariate adjusted complete case',
+                                  "Univariate")),
+         sig = case_when(Characteristic == "PFHxS_scaled"  & upper >1 & lower <1 ~ " ",
+                         T ~ sig),
+         Characteristic = str_replace(Characteristic, "_scaled", ""),
+         `Missingness treatment` = case_when(str_detect(cat, "MICE") ~ "MICE",
+                                             T~ "Complete case"),
+         cat3 = case_when(str_detect(cat, "Multivariate adjusted") ~ "Multivariate adjusted",
+                          T ~ "Multivariate adjusted + interaction")) %>% 
+  filter(Characteristic == 'PFOA' | Characteristic == 'PFOS' | Characteristic == 'PFNA' | Characteristic == 'PFHxS')
+
+#####################################################################################
+
+#TWO VISUALS - one for NCD mortality and one for all-cause
+
+ggsave('outputs/Vis/NCD.pdf',
+       forestplot_fun(scaled_PLOT, 'NCD mortality'),
+       width = 8,
+       height = 8,
+       units = 'in',
+       dpi = 300)
+
+ggsave('outputs/Vis/ACM.pdf',
+       forestplot_fun(scaled_PLOT, 'All cause mortality'),
+       width = 8,
+       height = 8,
+       units = 'in',
+       dpi = 300)
+```
