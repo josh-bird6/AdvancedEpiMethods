@@ -5,13 +5,13 @@
 
 write.csv(bind_rows(
   
-  exposure_extraction_fun(FINAL_BASEDATASET$PFOA, "PFOA"),
+  exposure_extraction_fun(FINAL_BASEDATASET_regression$PFOA, "PFOA"),
   
-  exposure_extraction_fun(FINAL_BASEDATASET$PFOS, "PFOS"),
+  exposure_extraction_fun(FINAL_BASEDATASET_regression$PFOS, "PFOS"),
   
-  exposure_extraction_fun(FINAL_BASEDATASET$PFNA, "PFNA"),
+  exposure_extraction_fun(FINAL_BASEDATASET_regression$PFNA, "PFNA"),
   
-  exposure_extraction_fun(FINAL_BASEDATASET$PFHxS, "PFHxS")
+  exposure_extraction_fun(FINAL_BASEDATASET_regression$PFHxS, "PFHxS")
   
 ) %>% 
   remove_rownames(), 'Data/test.csv')
@@ -19,7 +19,13 @@ write.csv(bind_rows(
 
 #Table 1, stratified by outcome (and including exposure information)
 #First specifying variables of interest
-varsofinterest <- c('PFOA', 'PFOS', 'PFNA', 'PFHxS', 'Year', "Gender", "Age", "Ethnicity", "Education", "Povertytoincomeratio", "Diabetes", "BMI_class", 'Diet', 'Occupation2')
+varsofinterest <- c('PFOA', 'PFOS', 'PFNA', 'PFHxS', 'Year', "Age", "Gender", "Ethnicity", "EducationHighest", "Povertytoincomeratio", 'Occupation2', 'Diet', 'Diabetes', 'BMI_class', 'Hypertension', 'ChronicKidneyDisease', 'Hyperlipidemia')
+
+svyTable1::svytable1(design = nhanes_design,
+                     strata_var = "MAINOUTCOME",
+                     table_vars = 'Age_category')
+
+
 
 #UNWEIGHTED (these are counts)
 write.csv(print(
@@ -46,13 +52,14 @@ write.csv(
       strata = 'MAINOUTCOME',
       data = nhanes_design,
       test = F,
+      includeNA = T,
       addOverall = T
     ),
     print = T,
     format = 'p',
     nonnormal = c('PFOA', "PFOS", 'PFNA', 'PFHxS')
   ),
-  'outputs/Table/Outcomestable_COUNTS.csv'
+  'outputs/Table/Outcomestable_PROP.csv'
 )
 
 
