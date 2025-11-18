@@ -124,6 +124,24 @@ extractfun_latter <- function(lab, demo, diabetes, BMI, Smoking, Hypertension, M
     left_join(mortdata, by = 'SEQN') 
 }
 ######################################################
+#Defining funciton for calculating glomerular filtration rate, used to assess presence of chronic kidney disease 
+eGFR_rate <- function(creatinine, age, sex) {
+  
+  # define constant for sex
+  k <- ifelse(sex == "Female", 0.7, 0.9)
+  a <- ifelse(sex == "Female", -0.241, -0.302)
+  factor_sex <- ifelse(sex == "Female", 1.012, 1)
+  
+  # Calculate eGFR
+  egfr <- 142 * (pmin(creatinine / k, 1) ^ a) * 
+    (pmax(creatinine / k, 1) ^ -1.200) * 
+    (0.9938 ^ age) * factor_sex
+  
+  return(egfr)
+}
+
+
+######################################################
 #EXPOSURE TABLE
 
 #Defining function which extracts and formats exposure data for each analyte
@@ -142,4 +160,31 @@ exposure_extraction_fun <- function(Analyte, PFAS){
            Max = `....5`) %>%
     select(Substance, `Median [1Q-3Q]`, Min, Max)
   
+}
+
+#############################
+#Function for creating forest plot
+forestplot_fun <- function(df, OUTCOME){
+  df %>% 
+    filter(outcome == OUTCOME) %>% 
+    mutate(cat3 = case_when(cat == 'Univariate' ~ cat,
+                            T~ cat3),
+           `Missingness treatment` = as.factor(`Missingness treatment`),
+           `Missingness treatment` = fct_relevel(`Missingness treatment`, c('Univariate analysis \n(n = 13,798)',
+                                                                            'Complete case \n(n = 10,630)',
+                                                                            'MICE \n(n = 13,798)'))) %>% 
+    ggplot(aes(x = Characteristic, y = HR, ymin = lower, ymax = upper,  color = `Missingness treatment`, linetype = `Missingness treatment`)) +
+    
+    geom_linerange(position = position_dodge2(width = 0.5, reverse = 2), size = 1, key_glyph = 'path') +
+    scale_linetype_manual(values = c('longdash', 'solid', 'solid')) +
+    geom_point(position = position_dodge2(width = 0.5, reverse = T), size = 2) +
+    scale_color_manual(values = c('#000000','#000000', '#888888'))+
+    facet_wrap(~factor(cat3, levels = c('Univariate', 'Multivariate adjusted', 'Multivariate adjusted + interaction')), nrow = 3) +
+    geom_hline(yintercept = 1) +
+    coord_flip() +
+    theme_bw()+
+    theme(legend.position = 'bottom') +
+    scale_y_continuous(limits = c(.68, 1.7)) + 
+    labs(title = OUTCOME) +
+    geom_text(aes(label = paste0("HR: ", round(HR,2), " [CI: ", round(lower,2), ", ", round(upper,2), "]")), y = 1.44, position = position_dodge2(width = 0.9, reverse = T), hjust = 0, show.legend = F) 
 }
