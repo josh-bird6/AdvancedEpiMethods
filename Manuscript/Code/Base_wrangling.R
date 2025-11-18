@@ -14,15 +14,15 @@ data_mort_1718 <- readfun('2017_2018')
 
 #################################################
 #Extracting data for for 2003-04 through 2011-12
-`2003-04` <- extractfun('L24PFC_C', 'DEMO_C', 'DIQ_C', 'BMX_C', 'SMQ_C', 'BPQ_C', 'RHQ_C', 'MCQ_C', 'L40_C', "OCQ_C", "DR1TOT_C", 'WTSA2YR', "2003-04", data_mort_0304) 
+`2003-04` <- extractfun('L24PFC_C', 'DEMO_C', 'DIQ_C', 'BMX_C', 'SMQ_C', 'SMQ_C', 'BPQ_C', 'RHQ_C', 'MCQ_C', 'L40_C', 'l13_c', "OCQ_C", "DR1TOT_C", 'WTSA2YR', "2003-04", data_mort_0304) 
 
-`2005-06` <- extractfun('PFC_D', 'DEMO_D', 'DIQ_D', 'BMX_D', 'SMQ_D', 'BPQ_D', 'RHQ_D', 'MCQ_D', 'BIOPRO_D', "OCQ_D", 'DR1TOT_D', 'WTSA2YR', '2005-06', data_mort_0506)
+`2005-06` <- extractfun('PFC_D', 'DEMO_D', 'DIQ_D', 'BMX_D', 'SMQ_D', 'SMQ_D', 'BPQ_D', 'RHQ_D', 'MCQ_D', 'BIOPRO_D', 'TCHOL_D', "OCQ_D", 'DR1TOT_D', 'WTSA2YR', '2005-06', data_mort_0506)
 
-`2007-08` <- extractfun('PFC_E', 'DEMO_E', 'DIQ_E', 'BMX_E', 'SMQ_E', 'BPQ_E', 'RHQ_E', 'MCQ_E', 'BIOPRO_E', "OCQ_E", 'DR1TOT_F', "WTSC2YR", '2007-08', data_mort_0708)
+`2007-08` <- extractfun('PFC_E', 'DEMO_E', 'DIQ_E', 'BMX_E', 'SMQ_E', 'SMQ_E', 'BPQ_E', 'RHQ_E', 'MCQ_E', 'BIOPRO_E', 'TCHOL_E', "OCQ_E", 'DR1TOT_E', "WTSC2YR", '2007-08', data_mort_0708)
 
-`2009-10` <- extractfun('PFC_F', 'DEMO_F', 'DIQ_F', 'BMX_F', 'SMQ_F', 'BPQ_F', 'RHQ_F', 'MCQ_F', 'BIOPRO_F', "OCQ_F", 'DR1TOT_G', "WTSC2YR", '2009-10', data_mort_0910)
+`2009-10` <- extractfun('PFC_F', 'DEMO_F', 'DIQ_F', 'BMX_F', 'SMQ_F', 'SMQ_F', 'BPQ_F', 'RHQ_F', 'MCQ_F', 'BIOPRO_F', 'TCHOL_F', "OCQ_F", 'DR1TOT_F', "WTSC2YR", '2009-10', data_mort_0910)
 
-`2011-12` <- extractfun('PFC_G', 'DEMO_G', 'DIQ_G', 'BMX_G', 'SMQ_G', 'BPQ_G', 'RHQ_G', 'MCQ_G', 'BIOPRO_G', "OCQ_G", 'DR1TOT_H', "WTSA2YR", '2011-12', data_mort_1112)
+`2011-12` <- extractfun('PFC_G', 'DEMO_G', 'DIQ_G', 'BMX_G', 'SMQ_G', 'SMQ_G', 'BPQ_G', 'RHQ_G', 'MCQ_G', 'BIOPRO_G', 'TCHOL_G', "OCQ_G", 'DR1TOT_G', "WTSA2YR", '2011-12', data_mort_1112)
 
 ######################
 ######################
@@ -51,33 +51,38 @@ data_mort_1718 <- readfun('2017_2018')
   left_join(nhanes('DEMO_H'), by = 'SEQN') %>%        #joining sociodemographic data
   left_join(nhanes('DIQ_H'), by = 'SEQN') %>%         #joining diabetes data (questionnaire)
   left_join(nhanes('BMX_H'), by = 'SEQN') %>%         #joining BMI data (exam)
-  left_join(nhanes('SMQ_H'), by = 'SEQN') %>%         #joining smoking data (exam)
+  left_join(nhanes('SMQ_H'), by = 'SEQN') %>%         #joining smoking data (laboratory)
   left_join(nhanes('BPQ_H'), by = 'SEQN') %>%         #joining hypertension data (questionnaire)
   left_join(nhanes('RHQ_H'), by = 'SEQN') %>%         #joining menstrual cycle data (questionnaire)
   left_join(nhanes('MCQ_H'), by = 'SEQN') %>%         #joining heart disease data (questionnaire)
   left_join(nhanes('BIOPRO_H'), by = 'SEQN') %>%      #joining kidney data (laboratory data)
-  left_join(nhanes('OCQ_H'), by = 'SEQN') %>%       #joining occupation data (exam)
-  left_join(nhanes('DR1TOT_H'), by = 'SEQN') %>%             #joining diet information (exam)
+  left_join(nhanes('OCQ_H'), by = 'SEQN') %>%         #joining occupation data (exam)
+  left_join(nhanes('DR1TOT_H'), by = 'SEQN') %>%      #joining diet information (exam)
+  left_join(nhanes('TCHOL_H'), by = 'SEQN') %>%       #joining cholesterol information (laboratory)
   rename(Weight = WTSSBH2Y,
          Gender = RIAGENDR,
          Age = RIDAGEYR,
          Ethnicity = RIDRETH1,
          Education = DMDEDUC2,
+         Education2 = DMDEDUC3,
          Income = INDFMPIR,
          Diabetes = DIQ010,
          BMI = BMXBMI, 
-         Smoking = SMQ040,
+         Smoking = SMQ020,
+         SmokingCurrent = SMQ040,
          Hypertension = BPQ020,
          Menopause = RHQ031,
          Heartdisease = MCQ160C,
          Kidney = LBXSCR,
+         Cholesterol = LBXTC,
          Occupation = OCD150,
+         Occupation_unemp = OCQ380,
          Diet = DRD360,
          Pregnancy = RIDEXPRG,
          PseudoPSU = SDMVPSU,
          PseudoStratum = SDMVSTRA) %>% 
   mutate(Year = '2013-14') %>% 
-  select(Year, SEQN, PFOA, PFOS, PFNA, PFHxS, Gender, Age, Ethnicity, Education, Income, Diabetes, BMI, Smoking, Hypertension, Menopause, Heartdisease, Kidney, Pregnancy, Occupation, Diet,  Weight, PseudoPSU, PseudoStratum) %>% 
+  select(Year, SEQN, PFOA, PFOS, PFNA, PFHxS, Gender, Age, Ethnicity, Education, Education2, Income, Diabetes, BMI, Smoking, SmokingCurrent, Hypertension, Menopause, Heartdisease, Kidney, Cholesterol, Pregnancy, Occupation, Occupation_unemp, Diet,  Weight, PseudoPSU, PseudoStratum) %>% 
   left_join(data_mort_1314, by = 'SEQN')
 ######################
 ######################
@@ -88,9 +93,9 @@ data_mort_1718 <- readfun('2017_2018')
 
 #2015/16 and 2017/18
 
-`2015-16` <- extractfun_latter('PFAS_I', 'DEMO_I', 'DIQ_I', 'BMX_I', 'SMQ_I', 'BPQ_I', 'RHQ_I', 'MCQ_I', 'BIOPRO_I', "OCQ_I", 'DR1TOT_I', "2015-16", data_mort_1516)
+`2015-16` <- extractfun_latter('PFAS_I', 'DEMO_I', 'DIQ_I', 'BMX_I', 'SMQ_I', 'BPQ_I', 'RHQ_I', 'MCQ_I', 'BIOPRO_I', 'TCHOL_I', "OCQ_I", 'DR1TOT_I', "2015-16", data_mort_1516)
 
-`2017-18` <- extractfun_latter('PFAS_J', 'DEMO_J', 'DIQ_J', 'BMX_J', 'SMQ_J', 'BPQ_J', 'RHQ_J', 'MCQ_J', 'BIOPRO_J', "OCQ_J", "DR1TOT_J", "2017-18", data_mort_1718)
+`2017-18` <- extractfun_latter('PFAS_J', 'DEMO_J', 'DIQ_J', 'BMX_J', 'SMQ_J', 'BPQ_J', 'RHQ_J', 'MCQ_J', 'BIOPRO_J', 'TCHOL_J', "OCQ_J", "DR1TOT_J", "2017-18", data_mort_1718)
 
 
 ##################################################
@@ -124,8 +129,6 @@ FINAL_BASEDATASET <- bind_rows(
                             T ~ 0),
     #Calibrating weight based on number of survey cycles
     Weight_pool = Weight/8,
-    #Creating follow-up time variable
-    fu_time = (Age * 12) + permth_int,
     
     #NOW FOR SOME WRANGLING
     #First we are going to transform the exposure scales. They are heavily right-skewed, so going to log transform and then scale (mean = 0, SD = 1)
@@ -147,26 +150,90 @@ FINAL_BASEDATASET <- bind_rows(
         'high school grad/ged or equivalent'
       ) ~ 'High School/GED or equivalent',
       T ~ Education
-    ), 
+    ),
     Education = str_to_title(Education),
+    Education2 = str_to_lower(Education2),
+    Education3 = case_when(Education2 == 'high school graduate' | Education2 == 'ged or equivalent' ~ 'High School/Ged Or Equivalent',
+                          Education2 == 'more than high school' ~ 'Some College Or Aa Degree',
+                          Education2 == '9th grade' | Education2 =='10th grade' | Education2 =='11th grade' | Education2 =='12th grade, no diploma' | Education2 =='less than 9th grade' ~ 'Some High School Or Below'),
+    EducationHighest = case_when(Age %in% c(18,19) ~ Education3,
+                                 Age >=20~ Education),
     BMI_class = case_when(BMI < 25 ~ 'Normal weight',
                           BMI >= 25 & BMI < 30 ~ 'Overweight',
                           BMI >= 30 ~ 'Obese'), 
-    Menopause2 = case_when(Menopause == 'No' | Gender == 'Female' & Age >= 60 ~ "Yes", 
-                           T ~ "No"), 
-    Occupation2 = case_when(Occupation == 'Working at a job or business,' ~ 'Employed', Occupation == 'With a job or business but not at work,' | Occupation == "Looking for work, or" | Occupation == 'Not working at a job or business?' ~ 'Not employed',
-                            T ~ Occupation), 
-           #Finally, creating a binary flag for all cause mortality (to be explored in secondary analysis)
+    Menopause2 = case_when(Menopause == 'No' | Gender == 'Female' & Age >= 60 ~ "Yes",
+                           Menopause == 'Yes' | Gender == 'Female' & Age < 60 ~ "No"), 
+    Occupation2 = case_when(Occupation == 'Working at a job or business,' ~ 'Employed',
+                            Occupation_unemp == 'Taking care of house or family' ~ 'Domestic caregiver',
+                            Occupation_unemp == 'Unable to work for health reasons' | Occupation_unemp == 'Disabled' ~ 'Disabled',
+                            Occupation_unemp == 'Retired' ~ 'Retired',
+                            Occupation == 'With a job or business but not at work,' | Occupation == "Looking for work, or" | Occupation == 'Not working at a job or business?' | Occupation_unemp == 'Going to school' ~ 'Not employed'),
+    # Occupation2 = case_when(Occupation == 'Working at a job or business,' ~ 'Employed', Occupation == 'With a job or business but not at work,' | Occupation == "Looking for work, or" | Occupation == 'Not working at a job or business?' ~ 'Not employed',
+    #                         T ~ Occupation), 
+    #Smoking status, derived from two variables
+    SmokingStatus = case_when(Smoking == 'No' ~ 'Never smoked',
+                              SmokingCurrent == 'Every day' ~ 'Smokes every day',
+                              SmokingCurrent == 'Some days' ~ 'Smokes some days',
+                              SmokingCurrent == 'Not at all' ~ 'Former Smoker'),
+    #Hyperlipidemia variable
+    Hyperlipidemia = case_when(Cholesterol >= 200 ~ "Yes",
+                               Cholesterol <200 ~ 'No'),
+    #Chronic kidney disease - see function in Functions.R
+    eGFR = eGFR_function(Kidney, Age, Gender),
+    ChronicKidneyDisease = case_when(eGFR < 60 ~ "Yes",
+                                     eGFR >= 60 ~ 'No'),
+    #Replacing all "Refused" and 'Don't know' answers with NA
+    across(c(EducationHighest, Diabetes, Occupation2, Diet, Smoking, Heartdisease, Menopause), na_if, "Refused"),
+    across(c(Diabetes, Occupation2, Diet, Hypertension, Smoking, Heartdisease, Menopause), na_if, "Don't know"),
+    across(c(EducationHighest), na_if, "Don't Know"),
+    #Some individuals do not have a weight (n=33) so these are coerced to 0 - they will be filtered out anyway because they have no exposure data
+    Weight_pool = case_when(is.na(Weight_pool) ~ 0,
+                            T ~ Weight_pool),
+    Year2 = case_when(Year == "2003-04" | Year == "2005-06" | Year == "2007-08" ~ "2003 to 2008",
+                     T ~ "2009 to 2018"),
+    #Finally, creating a binary flag for all cause mortality (to be explored in secondary analysis)
     Allcausemortality = case_when(!is.na(`Cause of death`) ~ 1,
-                                         T ~ 0)
+                                         T ~ 0),
+    Age_category = case_when(Age >= 18 & Age <40 ~ "18-39",
+                             Age >=40 & Age <60 ~ "40-59",
+                             Age >=60 & Age <80 ~ "60-79",
+                             T ~ '80 and up'),
+    Age_binary = case_when(Age >= 65 ~ "65 and over",
+                           T ~ "Under 65"),
+    #Bunch of releveling
+    Occupation2 = relevel(as.factor(Occupation2), ref = "Not employed"),
+    Ethnicity = relevel(as.factor(Ethnicity), ref = 'Non-Hispanic White'),
+    EducationHighest = factor(EducationHighest, levels = c("Some High School Or Below", "High School/Ged Or Equivalent", "Some College Or Aa Degree", "College Graduate Or Above")),
+    SmokingStatus = factor(SmokingStatus, levels = c("Never smoked", "Former Smoker", "Smokes some days", "Smokes every day")),
+    Diabetes = relevel(as.factor(Diabetes), ref = 'No'),
+    Hypertension = relevel(as.factor(Hypertension), ref = 'No'),
+    Heartdisease = relevel(as.factor(Heartdisease), ref = 'No'),
+    Diet = relevel(as.factor(Diet), ref = 'No'),
+    Hyperlipidemia = relevel(as.factor(Hyperlipidemia), ref = 'No'),
+    ChronicKidneyDisease = relevel(as.factor(ChronicKidneyDisease), ref = 'No'),
     ) %>% 
-  #some people do not have weights applied, so they are removed
-  filter(!is.na(Weight_pool)) %>% 
-  rename(`Povertytoincomeratio` = Income) %>% 
-  select(MAINOUTCOME, Year, SEQN, PFOA, PFOA_scaled, PFOS, PFOS_scaled, PFNA, PFNA_scaled, PFHxS, PFHxS_scaled, everything(), -diabetes, -hyperten, -eligstat, -Menopause)
-
-#checking missingness
-unlist(lapply(FINAL_BASEDATASET , function(x) sum(is.na(x))))/nrow(FINAL_BASEDATASET) 
-
-
+  select(Menopause, Menopause2, permth_int, MAINOUTCOME, Allcausemortality, Year2, SEQN, PFOA, PFOA_scaled, PFOS, PFOS_scaled, PFNA, PFNA_scaled, PFHxS, PFHxS_scaled, Age, Age_category, Age_binary, Gender, Ethnicity, EducationHighest, Income, Occupation2, Diet, Diabetes, BMI_class, Hypertension, ChronicKidneyDisease, Hyperlipidemia, Weight_pool, PseudoPSU, PseudoStratum, mortstat) %>% 
+  rename(`Povertytoincomeratio` = Income,
+         Year = Year2) %>% 
+  mutate(gender_subgroup = case_when(Gender == 'Male' ~ 'Male',
+                                     Menopause2 == 'No' ~ 'Pre-menopausal female',
+                                     Menopause2 == 'Yes' ~ 'Post-menopausal female'),
+         gender_subgroup = factor(gender_subgroup, levels = c('Male', 'Pre-menopausal female', 'Post-menopausal female'))) 
+  # %>% 
+  #creating tertiles for sensitivity analysis (probably won't use)
+  # mutate(PFOA_tertile = cut(PFOA,(quantile(.$PFOA, c(0:3 / 3), na.rm = T)),
+  #                           include.lowest = T,
+  #                           labels = c('Low', 'Medium', "High")),
+  #        PFOS_tertile = cut(PFOS,(quantile(.$PFOS, c(0:3 / 3), na.rm = T)),
+  #                           include.lowest = T,
+  #                           labels = c('Low', 'Medium', "High")),
+  #        PFNA_tertile = cut(PFNA,(quantile(.$PFNA, c(0:3 / 3), na.rm = T)),
+  #                           include.lowest = T,
+  #                           labels = c('Low', 'Medium', "High")),
+  #        PFHxS_tertile = cut(PFHxS,(quantile(.$PFHxS, c(0:3 / 3), na.rm = T)),
+  #                            include.lowest = T,
+  #                            labels = c('Low', 'Medium', "High")))
+  
+#Dropping unused levels from factor variables
+FINAL_BASEDATASET <- droplevels(FINAL_BASEDATASET)
 
