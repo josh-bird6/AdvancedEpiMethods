@@ -2,11 +2,12 @@
 
 
 #Exclusion criteria and variable transformation - SUBSETTING DATASET
-FINAL_BASEDATASET_regression <- FINAL_BASEDATASET %>%
+FINAL_BASEDATASET_regression <- FINAL_BASEDATASET %>% #n=17,851
   #exclusion criteria
   filter(Age >= 18,               #filtering out all observations under 18y/o (n = 14,965),        
          !is.na(PFOA),            #filtering out all observations with missing exposure data (individuals missing one measurement are missing them all, n = 13,828) 
-         !is.na(mortstat)) 
+         !is.na(mortstat))     #filtering out all observations with missing mortality data (n = 13,798)
+
 
 #Survey design object WITH ENTIRE ANALYTIC DATASET
 FINAL_BASEDATASET <- 
@@ -27,3 +28,6 @@ nhanes_design0 <- svydesign(
 
 #removing individuals who are missing
 nhanes_design <- subset(nhanes_design0, miss == 0)
+
+#checking missingness
+unlist(lapply(FINAL_BASEDATASET_regression, function(x) sum(is.na(x))))/nrow(FINAL_BASEDATASET_regression) 
